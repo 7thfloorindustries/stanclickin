@@ -6,6 +6,42 @@ Issues discovered during testing that need to be fixed in future updates.
 
 ## High Priority
 
+### New Users Cannot Like, Bookmark, or Repost (Comments Work)
+**Severity:** CRITICAL (core functionality broken)
+**Location:** `app/stanspace.tsx`, `components/PostCard.tsx`
+**Description:** New accounts can comment on posts, but Like, Bookmark, and Repost buttons don't work.
+
+**Steps to Reproduce:**
+1. Create new account
+2. Go to STANSPACE feed
+3. Try to like a post
+4. Try to bookmark a post
+5. Try to repost
+6. None of these actions work
+7. BUT commenting DOES work
+
+**Expected Behavior:** All interaction buttons should work for new accounts.
+
+**What happens when you tap Like/Bookmark/Repost?**
+- [x] Button animates and changes color
+- [x] Then reverts back to original state
+- [x] Error message shown: "Failed to update repost/bookmark/like"
+- [x] Old accounts CAN like/bookmark/repost successfully
+
+**Root Cause:** Likely Firestore security rules preventing new users from writing to likes/bookmarks/reposts subcollections. Error message is generic and doesn't show underlying Firebase error.
+
+**Investigation Needed:**
+1. Check Firestore security rules in Firebase Console
+2. Check if error is being logged to console (need full Firebase error)
+3. Verify new user documents have all required fields
+4. Check if there's a difference between old and new user documents
+
+**Status:** Discovered in TestFlight testing (2026-01-06)
+**Target Fix Version:** 1.0.1 (URGENT - may need hotfix before 1.0 release)
+**Assigned To:** TBD
+
+---
+
 ### Home Screen Music Doesn't Auto-Play on First Launch
 **Severity:** Low (UX issue, not breaking)
 **Location:** `app/index.tsx`
@@ -67,7 +103,39 @@ useEffect(() => {
 
 ## Medium Priority
 
-_No issues logged yet_
+### Theme Contrast Issues: Multiple UI Elements Unreadable
+**Severity:** Medium (affects usability across multiple themes)
+**Location:** Various - theme styling throughout app
+**Description:** Multiple UI elements have insufficient contrast with backgrounds in certain themes, making them unreadable or invisible.
+
+**Known Issues:**
+1. **Cyberpunk theme:** Search results text is too dark to read
+2. **Minimal background theme:** Follow button is invisible/unreadable
+
+**Steps to Reproduce:**
+1. Test each theme across all app screens
+2. Check readability of all interactive elements
+3. Verify buttons, text, and icons have sufficient contrast
+
+**Expected Behavior:** All UI elements should be readable in all themes on all screens.
+
+**Comprehensive Fix Needed:**
+- Audit all 8+ themes across all screens:
+  - Home screen
+  - STANSPACE (feed, search results, user profiles)
+  - STANHUB
+  - FLAPPYCLICKIN
+  - Settings
+  - Post creation
+  - Comments
+- Test buttons: Follow, Like, Bookmark, Repost, Comment, etc.
+- Test text: Search results, usernames, timestamps, post content
+- Add theme-specific color overrides where needed
+- Consider adding minimum contrast requirements
+
+**Status:** Discovered in TestFlight testing (2026-01-06)
+**Target Fix Version:** 1.0.1
+**Assigned To:** TBD
 
 ---
 
