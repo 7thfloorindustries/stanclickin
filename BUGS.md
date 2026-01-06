@@ -6,77 +6,6 @@ Issues discovered during testing that need to be fixed in future updates.
 
 ## High Priority
 
-### New Users Cannot Upload Photos or Bookmark Posts
-**Severity:** CRITICAL (major functionality broken)
-**Location:** Firebase Storage Rules, Bookmark functionality in `components/PostCard.tsx`
-**Description:** New accounts have issues with photo uploads and bookmarks. Other features work with limitations.
-
-**What Works:**
-- ✅ Text posts (without images)
-- ✅ Like own posts
-- ✅ Repost own posts
-- ✅ Comment on any post
-- ✅ Like/repost OTHER users' posts (needs verification)
-
-**What Fails:**
-- ❌ **Photo posts** → Error: "Firebase Storage: User does not have permission to access"
-- ❌ **Bookmark ANY post** (even own posts) → Error: "Failed to update bookmark"
-
-**Steps to Reproduce:**
-1. Create new account
-2. Try to create post WITH photo → Storage permission error
-3. Try to create text-only post → Works!
-4. Try to bookmark any post (including own) → Fails
-5. Try to like own post → Works!
-6. Try to repost own post → Works!
-
-**Expected Behavior:** All interaction buttons should work for new accounts.
-
-**What happens when you tap Like/Bookmark/Repost?**
-- [x] Button animates and changes color
-- [x] Then reverts back to original state
-- [x] Error message shown: "Failed to update repost/bookmark/like"
-- [x] Old accounts CAN like/bookmark/repost successfully
-
-**Root Cause - Two Separate Issues:**
-
-1. **Storage Rules Too Restrictive:**
-   - Firebase Storage not allowing authenticated users to upload images
-   - Blocks photo posts but text posts work fine
-
-2. **Bookmark Functionality Broken:**
-   - Bookmarks fail even on own posts
-   - Likely code bug, not just permissions (since like/repost own posts work)
-   - May be missing Firestore collection or incorrect path
-
-**FIXES REQUIRED:**
-
-**Fix 1: Firebase Storage Rules**
-1. Open Firebase Console → Storage → Rules
-2. Update to allow authenticated users to upload:
-   ```
-   rules_version = '2';
-   service firebase.storage {
-     match /b/{bucket}/o {
-       match /posts/{allPaths=**} {
-         allow write: if request.auth != null;
-         allow read: if true;
-       }
-     }
-   }
-   ```
-
-**Fix 2: Bookmark Functionality**
-1. Check if `bookmarks` collection/subcollection exists in Firestore
-2. Verify Firestore rules for bookmarks path
-3. Debug bookmark code in `components/PostCard.tsx`
-
-**Status:** Discovered in TestFlight testing (2026-01-06)
-**Target Fix Version:** 1.0.1 (URGENT - may need hotfix before 1.0 release)
-**Assigned To:** TBD
-
----
-
 ### Home Screen Music Doesn't Auto-Play on First Launch
 **Severity:** Low (UX issue, not breaking)
 **Location:** `app/index.tsx`
@@ -232,7 +161,19 @@ allowsEditing: false  // Skip crop, use original
 
 ## Fixed
 
-_No fixes yet_
+### Photo Uploads and Social Interactions (Fixed 2026-01-06)
+**Was:** New users couldn't upload photos, like/repost/bookmark other users' posts
+**Root Cause:**
+1. Firebase Storage rules missing `/posts/` path
+2. Firestore rules didn't allow counter updates on posts you don't own
+3. Firestore rules missing `/bookmarks/` path
+
+**Fix Applied:**
+1. Added Storage rules for `/posts/{allPaths=**}`
+2. Updated post rules to allow counter field updates
+3. Added Firestore rules for `/bookmarks/{userId}/posts/{postId}`
+
+**Status:** ✅ FIXED - All features now work for all users
 
 ---
 
