@@ -159,10 +159,14 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     if (!user) return Alert.alert("Not logged in");
 
     // Strong haptic feedback - both impact and notification
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    if (!liked) {
-      // Success notification for new likes
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      if (!liked) {
+        // Success notification for new likes
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error) {
+      console.error("Haptic error:", error);
     }
 
     // Animate the button
@@ -218,9 +222,13 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     }
   };
 
-  const openComments = () => {
+  const openComments = async () => {
     // Haptic feedback
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (error) {
+      console.error("Haptic error:", error);
+    }
 
     // Animate the button
     animateButton(commentScale);
@@ -233,7 +241,11 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     if (!user) return Alert.alert("Not logged in");
 
     // Haptic feedback
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.error("Haptic error:", error);
+    }
 
     // Animate the button
     animateButton(bookmarkScale);
@@ -278,10 +290,14 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     if (!user) return Alert.alert("Not logged in");
 
     // Strong haptic feedback - both impact and notification
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    if (!reposted) {
-      // Success notification for new reposts
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      if (!reposted) {
+        // Success notification for new reposts
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error) {
+      console.error("Haptic error:", error);
     }
 
     // Animate the button
