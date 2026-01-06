@@ -1,0 +1,209 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Anyone can read user profiles
+      allow read: if true;
+
+      // Users can create their own profile
+      allow create: if isSignedIn() && request.auth.uid == userId;
+
+      // Users can update their own profile (but cannot set isAdmin themselves)
+      allow update: if isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']);
+
+      // Users can delete their own profile OR admins can delete any profile
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Usernames collection (for unique username checking)
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    // Posts collection
+    match /posts/{postId} {
+      // Anyone can read posts
+      allow read: if true;
+
+      // Authenticated users can create posts
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+
+      // Users can update their own posts OR admins can update any post
+      allow update: if isOwner(resource.data.uid) || isAdmin();
+
+      // Users can delete their own posts OR admins can delete any post
+      allow delete: if isOwner(resource.data.uid) || isAdmin();
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        // Anyone can read comments
+        allow read: if true;
+
+        // Authenticated users can create comments
+        allow create: if isSignedIn()
+          && request.resource.data.uid == request.auth.uid;
+
+        // Users can update their own comments
+        allow update: if isOwner(resource.data.uid);
+
+        // Users can delete their own comments OR admins can delete any comment
+        allow delete: if isOwner(resource.data.uid) || isAdmin();
+
+        // Comment likes subcollection
+        match /likes/{likeId} {
+          // Anyone can read likes
+          allow read: if true;
+
+          // Users can create their own likes
+          allow create: if isSignedIn() && request.auth.uid == likeId;
+
+          // Users can delete their own likes
+          allow delete: if isSignedIn() && request.auth.uid == likeId;
+        }
+      }
+
+      // Post likes subcollection
+      match /likes/{likeId} {
+        // Anyone can read likes
+        allow read: if true;
+
+        // Users can create their own likes (likeId must be the user's uid)
+        allow create: if isSignedIn() && request.auth.uid == likeId;
+
+        // Users can delete their own likes
+        allow delete: if isSignedIn() && request.auth.uid == likeId;
+      }
+
+      // Post reposts subcollection
+      match /reposts/{userId} {
+        // Anyone can read reposts
+        allow read: if true;
+
+        // Users can create their own reposts
+        allow create: if isSignedIn() && request.auth.uid == userId;
+
+        // Users can delete their own reposts
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // Follows collection
+    match /follows/{userId} {
+      // Subcollections for followers and following
+      match /followers/{followerId} {
+        // Anyone can read followers
+        allow read: if true;
+
+        // Users can create follower documents
+        allow create: if isSignedIn();
+
+        // Users can delete their own follower entries
+        allow delete: if isSignedIn() && request.auth.uid == followerId;
+      }
+
+      match /following/{followingId} {
+        // Anyone can read following lists
+        allow read: if true;
+
+        // Users can create following documents for themselves
+        allow create: if isSignedIn() && request.auth.uid == userId;
+
+        // Users can delete their own following entries
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // Blocks collection
+    match /blocks/{userId}/blocked/{blockedUserId} {
+      // Users can read their own block list
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      // Users can block others
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == blockedUserId;
+
+      // Users can unblock others
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Reports collection - ADMIN ONLY
+    match /reports/{reportId} {
+      // Only admins can read all reports
+      allow read: if isAdmin();
+
+      // Authenticated users can create reports
+      allow create: if isSignedIn()
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.status == "pending";
+
+      // Only admins can update reports (to change status)
+      allow update: if isAdmin();
+
+      // Only admins can delete reports
+      allow delete: if isAdmin();
+    }
+
+    // Leaderboard collection (for FLAPPYCLICKIN game)
+    match /leaderboard/{docId} {
+      // Anyone can read the leaderboard
+      allow read: if true;
+
+      // Users can create their own leaderboard entries
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+
+      // Users can delete their own leaderboard entries
+      allow delete: if isSignedIn()
+        && resource.data.uid == request.auth.uid;
+
+      // No updates allowed (create new entry instead)
+      allow update: if false;
+    }
+
+    // Videos collection (for STANHUB) - ADMIN ONLY
+    match /videos/{videoId} {
+      // Anyone can read videos
+      allow read: if true;
+
+      // Only admins can create/update/delete videos
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Users can read their own notifications
+      allow read: if isSignedIn()
+        && resource.data.recipientUid == request.auth.uid;
+
+      // Any authenticated user can create notifications
+      allow create: if isSignedIn();
+
+      // Users can update their own notifications (mark as read)
+      allow update: if isSignedIn()
+        && resource.data.recipientUid == request.auth.uid;
+
+      // Users can delete their own notifications
+      allow delete: if isSignedIn()
+        && resource.data.recipientUid == request.auth.uid;
+    }
+  }
+}

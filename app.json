@@ -3,13 +3,21 @@
     "name": "stanclickin",
     "slug": "stanclickin",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "stanclickin",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.stanclickin.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "STANCLICKIN needs access to your photo library to let you share photos and create GIFs with your posts.",
+        "NSPhotoLibraryAddUsageDescription": "STANCLICKIN needs permission to save GIFs to your photo library.",
+        "NSCameraUsageDescription": "STANCLICKIN needs access to your camera to let you take photos for posts.",
+        "NSMicrophoneUsageDescription": "STANCLICKIN needs access to your microphone to record video for GIF creation."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +27,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.stanclickin.app"
     },
     "web": {
       "output": "static",
@@ -38,11 +47,18 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "411874fc-21c1-41e1-8cd3-ef06b4db6a2b"
+      }
     }
   }
 }
