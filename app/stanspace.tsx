@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator, Image, Modal, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Platform, ScrollView, RefreshControl, PanResponder, Animated } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image as ExpoImage } from "expo-image";
 import { BlurView } from "expo-blur";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -66,6 +67,7 @@ export default function StanSpace() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userTheme, setUserTheme] = useState<ThemeId | null>(null);
+  const [hideGamePosts, setHideGamePosts] = useState(false);
 
   const theme = getTheme(userTheme);
 
@@ -110,6 +112,43 @@ export default function StanSpace() {
     if (navigation?.canGoBack?.()) navigation.goBack();
     else router.replace("/");
   };
+
+  // Load game posts filter preference
+  useEffect(() => {
+    const loadPreference = async () => {
+      try {
+        const value = await AsyncStorage.getItem("hideGamePosts");
+        if (value !== null) {
+          setHideGamePosts(value === "true");
+        }
+      } catch (error) {
+        console.error("Error loading game posts preference:", error);
+      }
+    };
+    loadPreference();
+  }, []);
+
+  // Toggle game posts filter
+  const toggleGamePosts = async () => {
+    const newValue = !hideGamePosts;
+    setHideGamePosts(newValue);
+    try {
+      await AsyncStorage.setItem("hideGamePosts", newValue.toString());
+    } catch (error) {
+      console.error("Error saving game posts preference:", error);
+    }
+  };
+
+  // Filter out game posts if hideGamePosts is true
+  const isGamePost = (post: Post) => {
+    const text = post.text.toLowerCase();
+    return text.includes("flappyclickin") || text.includes("flappy") || text.includes("#game");
+  };
+
+  const filteredPosts = useMemo(() => {
+    if (!hideGamePosts) return posts;
+    return posts.filter((post) => !isGamePost(post));
+  }, [posts, hideGamePosts]);
 
   // Load user theme
   useEffect(() => {
@@ -756,6 +795,22 @@ export default function StanSpace() {
           </Pressable>
         </View>
 
+        {/* Game Posts Filter Toggle */}
+        <Pressable
+          style={[
+            styles.gameFilterChip,
+            {
+              backgroundColor: hideGamePosts ? theme.primaryColor : `${theme.primaryColor}15`,
+              borderColor: theme.primaryColor,
+            }
+          ]}
+          onPress={toggleGamePosts}
+        >
+          <Text style={[styles.gameFilterText, { color: hideGamePosts ? "#fff" : theme.primaryColor }]}>
+            🎮 {hideGamePosts ? "Game Posts Hidden" : "Show All Posts"}
+          </Text>
+        </Pressable>
+
         {loading ? (
           <View style={{ paddingBottom: 80 }}>
             <PostSkeleton />
@@ -788,7 +843,7 @@ export default function StanSpace() {
         ) : (
           <FlatList
             ref={flatListRef}
-            data={posts}
+            data={filteredPosts}
             keyExtractor={(p) => p.id}
             contentContainerStyle={{ paddingBottom: 80 }}
             renderItem={({ item }) =>
@@ -1657,5 +1712,19 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: "#ff0000",
+  },
+  gameFilterChip: {
+    alignSelf: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  gameFilterText: {
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
   },
 });
