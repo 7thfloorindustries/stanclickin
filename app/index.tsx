@@ -119,12 +119,6 @@ export default function Home() {
             subtitle="Challenge the leaderboard"
             onPress={() => handlePress("/flappyclickin", "flappyclickin")}
           />
-
-          <MenuButton
-            title="GIF MAKER"
-            subtitle="Turn videos into GIFs"
-            onPress={() => handlePress("/gifmaker", "gifmaker")}
-          />
         </View>
       </View>
     </View>
