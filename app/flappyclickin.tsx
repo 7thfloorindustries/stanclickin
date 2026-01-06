@@ -99,7 +99,6 @@ export default function FlappyClickin() {
   // Use Animated values for smooth updates
   const birdY = useRef(new Animated.Value(SCREEN_HEIGHT / 3)).current;
   const birdRotation = useRef(new Animated.Value(0)).current;
-  const screenShake = useRef(new Animated.Value(0)).current;
 
   // Use refs for game state
   const birdVelocity = useRef(0);
@@ -294,30 +293,6 @@ export default function FlappyClickin() {
       Animated.timing(birdRotation, {
         toValue: -20,
         duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    // Screen shake on tap
-    Animated.sequence([
-      Animated.timing(screenShake, {
-        toValue: 10,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(screenShake, {
-        toValue: -10,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(screenShake, {
-        toValue: 5,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(screenShake, {
-        toValue: 0,
-        duration: 50,
         useNativeDriver: true,
       }),
     ]).start();
@@ -676,19 +651,11 @@ ${top5}
         </>
       )}
 
-      <Animated.View
-        style={[
-          styles.gameArea,
-          {
-            transform: [{ translateX: screenShake }],
-          },
-        ]}
+      <Pressable
+        style={styles.gameArea}
+        onPress={jump}
+        pointerEvents={gameState === "gameOver" ? "none" : "auto"}
       >
-        <Pressable
-          style={StyleSheet.absoluteFillObject}
-          onPress={jump}
-          pointerEvents={gameState === "gameOver" ? "none" : "auto"}
-        />
         {/* Sky background */}
         <View style={[styles.sky, { backgroundColor: theme.stanPhoto ? "transparent" : theme.backgroundColor }]} />
 
@@ -796,7 +763,7 @@ ${top5}
           </>
         )}
 
-      </Animated.View>
+      </Pressable>
 
       {/* Ready screen */}
       {gameState === "ready" && (
