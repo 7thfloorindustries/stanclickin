@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, Alert } from "react-native";
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, query, where, getDocs, runTransaction } from "firebase/firestore";
 import { auth, db } from "../src/lib/firebase";
 import { router } from "expo-router";
 
@@ -19,16 +19,31 @@ export default function Username() {
       return Alert.alert("Invalid username", "Use 3–15 chars: a–z, 0–9, underscore.");
     }
 
-    const unameRef = doc(db, "usernames", cleaned);
-    const unameSnap = await getDoc(unameRef);
-    if (unameSnap.exists()) return Alert.alert("Taken", "That username is already taken.");
+    try {
+      // Use transaction to atomically check and claim username
+      await runTransaction(db, async (transaction) => {
+        const unameRef = doc(db, "usernames", cleaned);
+        const unameSnap = await transaction.get(unameRef);
 
-    await setDoc(unameRef, { uid: user.uid, createdAt: Date.now() });
-    await setDoc(doc(db, "users", user.uid), {
-      username: cleaned,
-      email: user.email,
-      createdAt: Date.now()
-    }, { merge: true });
+        if (unameSnap.exists()) {
+          throw new Error("USERNAME_TAKEN");
+        }
+
+        // Atomically claim the username
+        transaction.set(unameRef, { uid: user.uid, createdAt: Date.now() });
+        transaction.set(doc(db, "users", user.uid), {
+          username: cleaned,
+          email: user.email,
+          createdAt: Date.now()
+        }, { merge: true });
+      });
+    } catch (error: any) {
+      if (error.message === "USERNAME_TAKEN") {
+        return Alert.alert("Taken", "That username is already taken.");
+      }
+      console.error("Error saving username:", error);
+      return Alert.alert("Error", "Failed to save username. Please try again.");
+    }
 
     // Auto-follow @stanclickin if the account exists
     try {
