@@ -289,7 +289,35 @@ export default function Profile() {
       }, 500);
     } catch (error: any) {
       console.error("Error creating post:", error);
-      Alert.alert("Error", error?.message || "Failed to create post");
+
+      // Determine if it's an upload error or post creation error
+      const isUploadError = error?.message?.includes("storage") || error?.message?.includes("upload");
+      const errorTitle = isUploadError ? "Image Upload Failed" : "Post Failed";
+      const errorMessage = isUploadError
+        ? "Failed to upload image. Your text and image are saved. Check your connection and try again."
+        : (error?.message || "Failed to create post. Your content is saved. Please try again.");
+
+      // Show error with retry option - DON'T clear content!
+      Alert.alert(
+        errorTitle,
+        errorMessage,
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              // Keep composer open with content intact
+            }
+          },
+          {
+            text: "Retry",
+            onPress: () => {
+              // Retry immediately
+              createPost();
+            }
+          }
+        ]
+      );
     } finally {
       setUploading(false);
     }
