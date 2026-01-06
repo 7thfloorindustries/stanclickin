@@ -138,6 +138,33 @@ useEffect(() => {
 
 ## Medium Priority
 
+### Keyboard Covers Comment Input on Long Posts
+**Severity:** Medium (UX issue)
+**Location:** `app/post.tsx`
+**Description:** When commenting on long posts (like the Flappyclickin post), the keyboard covers the comment input field, making it impossible to see what you're typing.
+
+**Steps to Reproduce:**
+1. Go to STANSPACE
+2. Click on a long post (e.g., Flappyclickin announcement)
+3. Tap the comment input field at bottom
+4. Keyboard appears and covers the input
+5. Cannot see what you're typing
+
+**Expected Behavior:** Page should scroll up or adjust so comment input is visible above keyboard.
+
+**Technical Cause:** Missing or misconfigured KeyboardAvoidingView/KeyboardAwareScrollView in post detail screen.
+
+**Possible Solution:**
+- Wrap post detail content in `KeyboardAvoidingView` with `behavior="padding"` (iOS)
+- Or use `react-native-keyboard-aware-scroll-view` (already installed)
+- Ensure comment input has proper `keyboardVerticalOffset`
+
+**Status:** Discovered in TestFlight testing (2026-01-06)
+**Target Fix Version:** 1.0.1
+**Assigned To:** TBD
+
+---
+
 ### Theme Contrast Issues: Multiple UI Elements Unreadable
 **Severity:** Medium (affects usability across multiple themes)
 **Location:** Various - theme styling throughout app
