@@ -53,7 +53,6 @@ export default function RootLayout() {
       seg0 === "stanspace" ||
       seg0 === "stanhub" ||
       seg0 === "flappyclickin" ||
-      seg0 === "gifmaker" ||
       seg0 === "post" ||
       seg0 === "settings" ||
       seg0 === "u";
@@ -76,7 +75,6 @@ export default function RootLayout() {
       <Stack.Screen name="stanspace" />
       <Stack.Screen name="stanhub" />
       <Stack.Screen name="flappyclickin" />
-      <Stack.Screen name="gifmaker" />
 
       <Stack.Screen name="post" />
       <Stack.Screen name="settings" />

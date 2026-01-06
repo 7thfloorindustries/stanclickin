@@ -530,7 +530,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
         )}
       </Pressable>
 
-      {console.log("PostCard imageUrl:", post.imageUrl, "for post:", post.id)}
       {post.imageUrl && (
         <>
           <Pressable onPress={() => setImageModalVisible(true)}>
