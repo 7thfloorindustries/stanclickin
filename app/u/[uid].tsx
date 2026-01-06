@@ -614,11 +614,11 @@ export default function Profile() {
                     styles.followBtn,
                     isFollowing
                       ? { backgroundColor: theme.primaryColor, borderColor: theme.primaryColor }
-                      : { backgroundColor: "transparent", borderColor: theme.borderColor },
+                      : { backgroundColor: `${theme.primaryColor}15`, borderColor: theme.primaryColor, borderWidth: 2 },
                   ]}
                   onPress={toggleFollow}
                 >
-                  <Text style={[styles.followText, { color: isFollowing ? "#fff" : theme.textColor }]}>
+                  <Text style={[styles.followText, { color: isFollowing ? "#fff" : theme.primaryColor, fontWeight: "700" }]}>
                     {isFollowing ? "Following" : "Follow"}
                   </Text>
                 </Pressable>

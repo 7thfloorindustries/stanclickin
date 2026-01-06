@@ -944,7 +944,7 @@ export default function PostScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 120 : 0}
       >
         <View style={[styles.safe, userTheme && theme.stanPhoto && { backgroundColor: "transparent" }]}>
           <View style={[styles.wrap, userTheme && theme.stanPhoto ? { backgroundColor: "transparent" } : { backgroundColor: "#fff" }]}>
@@ -1120,10 +1120,10 @@ export default function PostScreen() {
             keyExtractor={(it) => (it.kind === "toggle" ? `t:${it.parentId}` : `c:${it.comment.id}`)}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            contentContainerStyle={{ paddingBottom: 20 }}
+            contentContainerStyle={{ paddingBottom: 100 }}
             enableOnAndroid={true}
             enableAutomaticScroll={true}
-            extraScrollHeight={20}
+            extraScrollHeight={150}
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Text style={[styles.emptyStateText, userTheme && theme.stanPhoto && styles.emptyStateTextWithBanner]}>

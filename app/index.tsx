@@ -31,6 +31,9 @@ export default function Home() {
         );
 
         backgroundMusic.current = sound;
+
+        // Auto-play music after loading
+        await sound.playAsync();
       } catch (error) {
         console.error("Error loading background music:", error);
       }

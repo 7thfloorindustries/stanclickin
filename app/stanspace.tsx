@@ -44,7 +44,7 @@ export default function StanSpace() {
 
   const flatListRef = useRef<FlatList>(null);
 
-  const [sortMode, setSortMode] = useState<"recent" | "trending" | "following">("recent");
+  const [sortMode, setSortMode] = useState<"recent" | "trending" | "following">("trending");
   const [posts, setPosts] = useState<Post[]>([]);
   const [text, setText] = useState("");
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -247,7 +247,7 @@ export default function StanSpace() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
-      allowsEditing: true,
+      allowsEditing: false,
       quality: 0.8,
     });
 
@@ -993,19 +993,19 @@ export default function StanSpace() {
                   >
                     {searchResults.users.length > 0 && (
                       <View style={styles.searchSection}>
-                        <Text style={styles.searchSectionTitle}>Users</Text>
+                        <Text style={[styles.searchSectionTitle, { color: theme.secondaryTextColor }]}>Users</Text>
                         {searchResults.users.map((user) => (
                           <Pressable
                             key={user.uid}
-                            style={styles.userResult}
+                            style={[styles.userResult, { borderColor: theme.borderColor }]}
                             onPress={() => {
                               setSearchVisible(false);
                               setSearchQuery("");
                               router.push(`/u/${user.uid}`);
                             }}
                           >
-                            <Text style={styles.userResultName}>@{user.username}</Text>
-                            {user.bio && <Text style={styles.userResultBio}>{user.bio}</Text>}
+                            <Text style={[styles.userResultName, { color: theme.textColor }]}>@{user.username}</Text>
+                            {user.bio && <Text style={[styles.userResultBio, { color: theme.secondaryTextColor }]}>{user.bio}</Text>}
                           </Pressable>
                         ))}
                       </View>
