@@ -6,20 +6,29 @@ Issues discovered during testing that need to be fixed in future updates.
 
 ## High Priority
 
-### New Users Cannot Post, Like, Bookmark, or Repost (Comments Work)
-**Severity:** BLOCKER - APP CANNOT SHIP (core functionality completely broken)
-**Location:** Firebase Security Rules (Firestore + Storage), `app/stanspace.tsx`, `components/PostCard.tsx`
-**Description:** New accounts cannot perform core actions. Like, Bookmark, Repost, and **Creating Posts** all fail. Comments work.
+### New Users Cannot Upload Photos or Bookmark Posts
+**Severity:** CRITICAL (major functionality broken)
+**Location:** Firebase Storage Rules, Bookmark functionality in `components/PostCard.tsx`
+**Description:** New accounts have issues with photo uploads and bookmarks. Other features work with limitations.
+
+**What Works:**
+- ✅ Text posts (without images)
+- ✅ Like own posts
+- ✅ Repost own posts
+- ✅ Comment on any post
+- ✅ Like/repost OTHER users' posts (needs verification)
+
+**What Fails:**
+- ❌ **Photo posts** → Error: "Firebase Storage: User does not have permission to access"
+- ❌ **Bookmark ANY post** (even own posts) → Error: "Failed to update bookmark"
 
 **Steps to Reproduce:**
 1. Create new account
-2. Go to STANSPACE feed
-3. Try to create a post → **Error: "Firebase Storage: User does not have permission to access"**
-4. Try to like a post → **Error: "Failed to update like"**
-5. Try to bookmark a post → **Error: "Failed to update bookmark"**
-6. Try to repost → **Error: "Failed to update repost"**
-7. BUT commenting DOES work
-8. Old accounts can do ALL of these actions
+2. Try to create post WITH photo → Storage permission error
+3. Try to create text-only post → Works!
+4. Try to bookmark any post (including own) → Fails
+5. Try to like own post → Works!
+6. Try to repost own post → Works!
 
 **Expected Behavior:** All interaction buttons should work for new accounts.
 
@@ -29,33 +38,38 @@ Issues discovered during testing that need to be fixed in future updates.
 - [x] Error message shown: "Failed to update repost/bookmark/like"
 - [x] Old accounts CAN like/bookmark/repost successfully
 
-**Root Cause:** Firebase Security Rules are too restrictive. Both Firestore and Storage rules are blocking new users from:
-- Creating posts (Storage upload blocked)
-- Liking posts (Firestore write blocked)
-- Bookmarking posts (Firestore write blocked)
-- Reposting (Firestore write blocked)
+**Root Cause - Two Separate Issues:**
 
-But comments work, suggesting rules allow some writes but not others.
+1. **Storage Rules Too Restrictive:**
+   - Firebase Storage not allowing authenticated users to upload images
+   - Blocks photo posts but text posts work fine
 
-**IMMEDIATE FIX REQUIRED:**
-1. Open Firebase Console → Firestore Database → Rules
-2. Open Firebase Console → Storage → Rules
-3. Update rules to allow authenticated users to:
-   - Upload images to Storage
-   - Write to posts collection
-   - Write to likes/bookmarks subcollections
-4. Example working rules needed:
+2. **Bookmark Functionality Broken:**
+   - Bookmarks fail even on own posts
+   - Likely code bug, not just permissions (since like/repost own posts work)
+   - May be missing Firestore collection or incorrect path
+
+**FIXES REQUIRED:**
+
+**Fix 1: Firebase Storage Rules**
+1. Open Firebase Console → Storage → Rules
+2. Update to allow authenticated users to upload:
    ```
-   // Firestore
-   match /posts/{postId}/likes/{userId} {
-     allow write: if request.auth.uid == userId;
-   }
-
-   // Storage
-   match /posts/{allPaths=**} {
-     allow write: if request.auth != null;
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /posts/{allPaths=**} {
+         allow write: if request.auth != null;
+         allow read: if true;
+       }
+     }
    }
    ```
+
+**Fix 2: Bookmark Functionality**
+1. Check if `bookmarks` collection/subcollection exists in Firestore
+2. Verify Firestore rules for bookmarks path
+3. Debug bookmark code in `components/PostCard.tsx`
 
 **Status:** Discovered in TestFlight testing (2026-01-06)
 **Target Fix Version:** 1.0.1 (URGENT - may need hotfix before 1.0 release)
@@ -162,7 +176,30 @@ useEffect(() => {
 
 ## Low Priority
 
-_No issues logged yet_
+### Photo Upload Forces Cropping - Is This Intentional?
+**Severity:** Low (UX question, not a bug per se)
+**Location:** `app/stanspace.tsx` image picker configuration
+**Description:** When uploading a photo for a post, the app forces the user to crop the image before posting. This may be intentional design, but worth verifying.
+
+**Current Behavior:**
+- Select photo from library
+- Forced into crop/edit screen
+- Cannot skip cropping
+
+**Question:** Is forced cropping intentional, or should users be able to post photos without cropping?
+
+**If Not Intentional:**
+Change expo-image-picker config from:
+```typescript
+allowsEditing: true  // Forces crop
+```
+To:
+```typescript
+allowsEditing: false  // Skip crop, use original
+```
+
+**Status:** Discovered in TestFlight testing (2026-01-06)
+**Decision Needed:** Product decision - keep forced crop or make it optional?
 
 ---
 
