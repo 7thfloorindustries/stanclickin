@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, Platform, ActionSheetIOS, Animated } from "react-native";
+import { View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, Platform, ActionSheetIOS, Animated, Share } from "react-native";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import { doc, increment, onSnapshot, runTransaction, serverTimestamp, getDoc, updateDoc, deleteDoc, collection, getDocs, setDoc } from "firebase/firestore";
@@ -18,6 +18,7 @@ export type Post = {
   likeCount?: number;
   commentCount?: number;
   repostCount?: number;
+  shareCount?: number;
   engagementCount?: number;
   repostedBy?: string; // Username of person who reposted (for feed display)
   repostedByUid?: string; // UID of person who reposted
@@ -39,6 +40,7 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
   const [likes, setLikes] = useState(post.likeCount ?? 0);
   const [reposts, setReposts] = useState(post.repostCount ?? 0);
+  const [shares, setShares] = useState(post.shareCount ?? 0);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editText, setEditText] = useState(post.text);
@@ -51,6 +53,7 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
   const commentScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const repostScale = useRef(new Animated.Value(1)).current;
+  const shareScale = useRef(new Animated.Value(1)).current;
 
   // Check if post can be edited (within 2 minutes)
   const canEdit = () => {
@@ -61,7 +64,7 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     return now - postTime < twoMinutes;
   };
 
-  // Sync likes and reposts when post prop updates
+  // Sync likes, reposts, and shares when post prop updates
   useEffect(() => {
     setLikes(post.likeCount ?? 0);
   }, [post.likeCount]);
@@ -69,6 +72,10 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
   useEffect(() => {
     setReposts(post.repostCount ?? 0);
   }, [post.repostCount]);
+
+  useEffect(() => {
+    setShares(post.shareCount ?? 0);
+  }, [post.shareCount]);
 
   // Format timestamp
   const getTimeAgo = (timestamp: any) => {
@@ -356,6 +363,59 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     }
   };
 
+  const sharePost = async () => {
+    try {
+      // Haptic feedback
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.error("Haptic error:", error);
+    }
+
+    // Animate the button
+    animateButton(shareScale);
+
+    // Create share text
+    const postPreview = post.text.length > 100
+      ? post.text.substring(0, 100) + "..."
+      : post.text;
+
+    const shareText = post.text
+      ? `Check out this post by @${author} on STANCLICKIN:\n\n${postPreview}\n\nDownload STANCLICKIN: https://apps.apple.com/app/stanclickin/id6738643257`
+      : `Check out @${author}'s post on STANCLICKIN!\n\nDownload STANCLICKIN: https://apps.apple.com/app/stanclickin/id6738643257`;
+
+    try {
+      const result = await Share.share({
+        message: shareText,
+      });
+
+      // If share was successful, increment share count
+      if (result.action === Share.sharedAction) {
+        // Optimistically update UI
+        setShares((prev) => prev + 1);
+
+        // Update Firestore
+        const postRef = doc(db, "posts", post.id);
+        await updateDoc(postRef, {
+          shareCount: increment(1),
+          engagementCount: increment(1),
+        });
+
+        // Success haptic
+        try {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (error) {
+          console.error("Haptic error:", error);
+        }
+      }
+    } catch (error: any) {
+      console.error("Error sharing:", error);
+      // Don't show alert for user cancellation
+      if (error?.message && !error.message.includes("cancel")) {
+        Alert.alert("Error", "Failed to share post");
+      }
+    }
+  };
+
   const editPost = async () => {
     if (!editText.trim()) {
       Alert.alert("Error", "Post cannot be empty");
@@ -601,6 +661,15 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
               🔁
             </Text>
             {reposts > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark, reposted && styles.actionCountReposted]}>{reposts}</Text>}
+          </Animated.View>
+        </Pressable>
+
+        <Pressable style={styles.actionBtn} onPress={sharePost}>
+          <Animated.View style={[styles.actionContent, { transform: [{ scale: shareScale }] }]}>
+            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark]}>
+              📤
+            </Text>
+            {shares > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark]}>{shares}</Text>}
           </Animated.View>
         </Pressable>
 

@@ -268,6 +268,8 @@ export default function Profile() {
         text: trimmed,
         likeCount: 0,
         commentCount: 0,
+        repostCount: 0,
+        shareCount: 0,
         engagementCount: 0,
         createdAt: serverTimestamp(),
       };
