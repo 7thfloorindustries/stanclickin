@@ -6,19 +6,20 @@ Issues discovered during testing that need to be fixed in future updates.
 
 ## High Priority
 
-### New Users Cannot Like, Bookmark, or Repost (Comments Work)
-**Severity:** CRITICAL (core functionality broken)
-**Location:** `app/stanspace.tsx`, `components/PostCard.tsx`
-**Description:** New accounts can comment on posts, but Like, Bookmark, and Repost buttons don't work.
+### New Users Cannot Post, Like, Bookmark, or Repost (Comments Work)
+**Severity:** BLOCKER - APP CANNOT SHIP (core functionality completely broken)
+**Location:** Firebase Security Rules (Firestore + Storage), `app/stanspace.tsx`, `components/PostCard.tsx`
+**Description:** New accounts cannot perform core actions. Like, Bookmark, Repost, and **Creating Posts** all fail. Comments work.
 
 **Steps to Reproduce:**
 1. Create new account
 2. Go to STANSPACE feed
-3. Try to like a post
-4. Try to bookmark a post
-5. Try to repost
-6. None of these actions work
+3. Try to create a post → **Error: "Firebase Storage: User does not have permission to access"**
+4. Try to like a post → **Error: "Failed to update like"**
+5. Try to bookmark a post → **Error: "Failed to update bookmark"**
+6. Try to repost → **Error: "Failed to update repost"**
 7. BUT commenting DOES work
+8. Old accounts can do ALL of these actions
 
 **Expected Behavior:** All interaction buttons should work for new accounts.
 
@@ -28,13 +29,33 @@ Issues discovered during testing that need to be fixed in future updates.
 - [x] Error message shown: "Failed to update repost/bookmark/like"
 - [x] Old accounts CAN like/bookmark/repost successfully
 
-**Root Cause:** Likely Firestore security rules preventing new users from writing to likes/bookmarks/reposts subcollections. Error message is generic and doesn't show underlying Firebase error.
+**Root Cause:** Firebase Security Rules are too restrictive. Both Firestore and Storage rules are blocking new users from:
+- Creating posts (Storage upload blocked)
+- Liking posts (Firestore write blocked)
+- Bookmarking posts (Firestore write blocked)
+- Reposting (Firestore write blocked)
 
-**Investigation Needed:**
-1. Check Firestore security rules in Firebase Console
-2. Check if error is being logged to console (need full Firebase error)
-3. Verify new user documents have all required fields
-4. Check if there's a difference between old and new user documents
+But comments work, suggesting rules allow some writes but not others.
+
+**IMMEDIATE FIX REQUIRED:**
+1. Open Firebase Console → Firestore Database → Rules
+2. Open Firebase Console → Storage → Rules
+3. Update rules to allow authenticated users to:
+   - Upload images to Storage
+   - Write to posts collection
+   - Write to likes/bookmarks subcollections
+4. Example working rules needed:
+   ```
+   // Firestore
+   match /posts/{postId}/likes/{userId} {
+     allow write: if request.auth.uid == userId;
+   }
+
+   // Storage
+   match /posts/{allPaths=**} {
+     allow write: if request.auth != null;
+   }
+   ```
 
 **Status:** Discovered in TestFlight testing (2026-01-06)
 **Target Fix Version:** 1.0.1 (URGENT - may need hotfix before 1.0 release)
