@@ -41,16 +41,22 @@ export default function Login() {
       return;
     }
 
-    // Basic email format validation
+    // Map username "appreviewer" to email for Apple Review
+    let loginEmail = email.trim();
+    if (loginEmail.toLowerCase() === "appreviewer") {
+      loginEmail = "appreviewer@test.com";
+    }
+
+    // Basic email format validation (skip for mapped username)
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      Alert.alert("Invalid Email", "Please enter a valid email address");
+    if (!emailRegex.test(loginEmail)) {
+      Alert.alert("Invalid Email", "Please enter a valid email address or username");
       return;
     }
 
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), pw);
+      await signInWithEmailAndPassword(auth, loginEmail, pw);
       router.replace("/");
     } catch (e: any) {
       Alert.alert("Sign in failed", e?.message ?? String(e));
@@ -102,10 +108,10 @@ export default function Login() {
           <View style={styles.form}>
             <TextInput
               style={styles.input}
-              placeholder="Email"
+              placeholder={mode === "login" ? "Email or Username" : "Email"}
               placeholderTextColor="#999"
               autoCapitalize="none"
-              keyboardType="email-address"
+              keyboardType={mode === "login" ? "default" : "email-address"}
               value={email}
               onChangeText={setEmail}
               editable={!loading}
