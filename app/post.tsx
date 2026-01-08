@@ -518,6 +518,29 @@ export default function PostScreen() {
     const trimmed = draft.trim();
     if (!trimmed) return;
 
+    // Content filter - blocks extreme harmful content
+    const extremelyHarmfulPatterns = [
+      /k[i1!]ll\s*(you|yourself|urself)/i,
+      /murder\s*(you|yourself)/i,
+      /(child|kid)\s*(porn|abuse)/i,
+      /human\s*traffick/i,
+      /n[i1!]gg[e3]r/i,
+      /f[a4]gg[o0]t/i,
+      /r[a4]p[e3]\s*(you|her|him)/i,
+    ];
+
+    const containsExtremeContent = extremelyHarmfulPatterns.some(pattern =>
+      pattern.test(trimmed.toLowerCase())
+    );
+
+    if (containsExtremeContent) {
+      Alert.alert(
+        "Content Policy Violation",
+        "Your comment contains content that violates our community guidelines."
+      );
+      return;
+    }
+
     const payload: any = {
       uid: user.uid,
       text: trimmed,
