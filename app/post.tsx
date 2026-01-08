@@ -35,6 +35,7 @@ import {
   updateDoc,
   increment,
   getDoc,
+  getDocs,
   deleteDoc,
   runTransaction,
 } from "firebase/firestore";
@@ -624,6 +625,14 @@ export default function PostScreen() {
 
   const deleteComment = async (c: Comment) => {
     if (!pid) return;
+
+    // Delete likes subcollection first
+    const likesSnap = await getDocs(collection(db, "posts", pid, "comments", c.id, "likes"));
+    const batch = await import("firebase/firestore").then((m) => m.writeBatch(db));
+    likesSnap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+
+    // Delete the comment itself
     await deleteDoc(doc(db, "posts", pid, "comments", c.id));
     await updateDoc(doc(db, "posts", pid), { commentCount: increment(-1), engagementCount: increment(-1) });
   };

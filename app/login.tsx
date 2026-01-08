@@ -10,10 +10,16 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [loading, setLoading] = useState(false);
+  const [tosAccepted, setTosAccepted] = useState(false);
 
   const signUp = async () => {
     if (!email.trim() || !pw) {
       Alert.alert("Error", "Please enter email and password");
+      return;
+    }
+
+    if (!tosAccepted) {
+      Alert.alert("Terms Required", "Please accept the Terms of Service to continue");
       return;
     }
 
@@ -88,7 +94,10 @@ export default function Login() {
           <View style={styles.modeTabs}>
             <Pressable
               style={[styles.modeTab, mode === "login" && styles.modeTabActive]}
-              onPress={() => setMode("login")}
+              onPress={() => {
+                setMode("login");
+                setTosAccepted(false);
+              }}
             >
               <Text style={[styles.modeTabText, mode === "login" && styles.modeTabTextActive]}>
                 Login
@@ -97,7 +106,10 @@ export default function Login() {
 
             <Pressable
               style={[styles.modeTab, mode === "signup" && styles.modeTabActive]}
-              onPress={() => setMode("signup")}
+              onPress={() => {
+                setMode("signup");
+                setTosAccepted(false);
+              }}
             >
               <Text style={[styles.modeTabText, mode === "signup" && styles.modeTabTextActive]}>
                 Sign Up
@@ -138,9 +150,23 @@ export default function Login() {
             </Pressable>
 
             {mode === "signup" && (
-              <Text style={styles.hint}>
-                By signing up, you'll get access to exclusive content and the creator community.
-              </Text>
+              <>
+                <Pressable
+                  style={styles.tosRow}
+                  onPress={() => setTosAccepted(!tosAccepted)}
+                >
+                  <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
+                    {tosAccepted && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={styles.tosText}>
+                    I agree to the Terms of Service. STANCLICKIN has zero tolerance for objectionable content, harassment, spam, or abusive behavior.
+                  </Text>
+                </Pressable>
+
+                <Text style={styles.hint}>
+                  By signing up, you'll get access to exclusive content and the creator community.
+                </Text>
+              </>
             )}
           </View>
         </View>
@@ -232,5 +258,36 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
     marginTop: 4,
+  },
+  tosRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 12,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderWidth: 2,
+    borderColor: "#111",
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  checkboxChecked: {
+    backgroundColor: "#111",
+  },
+  checkmark: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  tosText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#111",
+    lineHeight: 18,
+    fontWeight: "600",
   },
 });

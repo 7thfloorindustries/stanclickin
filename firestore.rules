@@ -46,8 +46,10 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid;
 
-      // Users can update their own posts OR admins can update any post
-      allow update: if isOwner(resource.data.uid) || isAdmin();
+      // Users can update their own posts OR admins can update any post OR anyone can update counter fields
+      allow update: if isOwner(resource.data.uid)
+        || isAdmin()
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'commentCount', 'repostCount', 'engagementCount', 'shareCount']));
 
       // Users can delete their own posts OR admins can delete any post
       allow delete: if isOwner(resource.data.uid) || isAdmin();
@@ -64,8 +66,8 @@ service cloud.firestore {
         // Users can update their own comments
         allow update: if isOwner(resource.data.uid);
 
-        // Users can delete their own comments OR admins can delete any comment
-        allow delete: if isOwner(resource.data.uid) || isAdmin();
+        // Users can delete their own comments OR post owner can delete any comments on their post OR admins can delete any comment
+        allow delete: if isOwner(resource.data.uid) || isOwner(get(/databases/$(database)/documents/posts/$(postId)).data.uid) || isAdmin();
 
         // Comment likes subcollection
         match /likes/{likeId} {
@@ -75,8 +77,8 @@ service cloud.firestore {
           // Users can create their own likes
           allow create: if isSignedIn() && request.auth.uid == likeId;
 
-          // Users can delete their own likes
-          allow delete: if isSignedIn() && request.auth.uid == likeId;
+          // Users can delete their own likes OR comment owner can delete likes on their comment OR post owner can delete any likes
+          allow delete: if isSignedIn() && (request.auth.uid == likeId || isOwner(get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.uid) || isOwner(get(/databases/$(database)/documents/posts/$(postId)).data.uid));
         }
       }
 
@@ -88,8 +90,8 @@ service cloud.firestore {
         // Users can create their own likes (likeId must be the user's uid)
         allow create: if isSignedIn() && request.auth.uid == likeId;
 
-        // Users can delete their own likes
-        allow delete: if isSignedIn() && request.auth.uid == likeId;
+        // Users can delete their own likes OR post owner can delete any likes on their post
+        allow delete: if isSignedIn() && (request.auth.uid == likeId || isOwner(get(/databases/$(database)/documents/posts/$(postId)).data.uid));
       }
 
       // Post reposts subcollection
@@ -100,8 +102,8 @@ service cloud.firestore {
         // Users can create their own reposts
         allow create: if isSignedIn() && request.auth.uid == userId;
 
-        // Users can delete their own reposts
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        // Users can delete their own reposts OR post owner can delete any reposts on their post
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isOwner(get(/databases/$(database)/documents/posts/$(postId)).data.uid));
       }
     }
 
@@ -204,6 +206,21 @@ service cloud.firestore {
       // Users can delete their own notifications
       allow delete: if isSignedIn()
         && resource.data.recipientUid == request.auth.uid;
+    }
+
+    // Bookmarks collection
+    match /bookmarks/{userId}/posts/{postId} {
+      // Users can read their own bookmarks
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      // Users can create their own bookmarks
+      allow create: if isSignedIn() && request.auth.uid == userId;
+
+      // Users can update their own bookmarks
+      allow update: if isSignedIn() && request.auth.uid == userId;
+
+      // Users can delete their own bookmarks
+      allow delete: if isSignedIn() && request.auth.uid == userId;
     }
   }
 }
