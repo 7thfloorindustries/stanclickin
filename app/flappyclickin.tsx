@@ -142,7 +142,7 @@ export default function FlappyClickin() {
     };
   }, []);
 
-  // Initialize IAP connection
+  // Initialize IAP connection and set up listeners
   useEffect(() => {
     const initIAP = async () => {
       try {
@@ -159,7 +159,46 @@ export default function FlappyClickin() {
 
     initIAP();
 
+    // Set up purchase listeners (MUST be set up before any purchase is made)
+    const purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase) => {
+      console.log("Purchase update received:", purchase);
+      const receipt = purchase.transactionReceipt;
+      if (receipt) {
+        try {
+          if (Platform.OS === 'android') {
+            await IAP.acknowledgePurchaseAndroid({ purchaseToken: purchase.purchaseToken! });
+          }
+          await IAP.finishTransaction({ purchase });
+
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert(
+            "Purchase Successful! 💰",
+            "Extra life granted with 3s invincibility!",
+            [
+              {
+                text: "Let's Go!",
+                onPress: () => {
+                  grantLife();
+                }
+              }
+            ]
+          );
+        } catch (ackErr) {
+          console.error("Error acknowledging purchase:", ackErr);
+        }
+      }
+    });
+
+    const purchaseErrorSubscription = IAP.purchaseErrorListener((error) => {
+      console.error("Purchase error:", error);
+      if (error.code !== 'E_USER_CANCELLED') {
+        Alert.alert("Purchase Failed", "Could not complete purchase. Please try again.");
+      }
+    });
+
     return () => {
+      purchaseUpdateSubscription.remove();
+      purchaseErrorSubscription.remove();
       IAP.endConnection();
     };
   }, []);
@@ -543,49 +582,9 @@ ${top5}
   const purchaseLife = async () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const productId = PRODUCT_IDS[0];
-      await IAP.requestPurchase({ sku: productId });
-
-      const purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase) => {
-        const receipt = purchase.transactionReceipt;
-        if (receipt) {
-          try {
-            if (Platform.OS === 'android') {
-              await IAP.acknowledgePurchaseAndroid({ purchaseToken: purchase.purchaseToken! });
-            }
-            await IAP.finishTransaction({ purchase });
-
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            Alert.alert(
-              "Purchase Successful! 💰",
-              "Extra life granted with 3s invincibility!",
-              [
-                {
-                  text: "Let's Go!",
-                  onPress: () => {
-                    grantLife();
-                  }
-                }
-              ]
-            );
-          } catch (ackErr) {
-            console.error("Error acknowledging purchase:", ackErr);
-          }
-        }
-      });
-
-      const purchaseErrorSubscription = IAP.purchaseErrorListener((error) => {
-        console.error("Purchase error:", error);
-        if (error.code !== 'E_USER_CANCELLED') {
-          Alert.alert("Purchase Failed", "Could not complete purchase. Please try again.");
-        }
-      });
-
-      // Clean up listeners after 30 seconds
-      setTimeout(() => {
-        purchaseUpdateSubscription.remove();
-        purchaseErrorSubscription.remove();
-      }, 30000);
+      console.log("Requesting purchase for:", PRODUCT_IDS[0]);
+      await IAP.requestPurchase({ sku: PRODUCT_IDS[0] });
+      // Listeners set up in useEffect will handle the purchase result
     } catch (error) {
       console.error("Error initiating purchase:", error);
       Alert.alert("Purchase Error", "Could not start purchase. Please try again.");
