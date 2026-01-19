@@ -152,8 +152,17 @@ export default function FlappyClickin() {
         // Get available products
         const products = await IAP.getProducts({ skus: PRODUCT_IDS });
         console.log("Available products:", products);
+
+        // DEBUG: Show products in alert
+        if (products.length === 0) {
+          Alert.alert("IAP Debug", `No products found!\nSearched for: ${PRODUCT_IDS[0]}`);
+        } else {
+          Alert.alert("IAP Debug", `Found ${products.length} product(s):\n${products.map(p => p.productId).join(', ')}`);
+        }
       } catch (error) {
         console.error("Error initializing IAP:", error);
+        // DEBUG: Show initialization error
+        Alert.alert("IAP Init Error", `${error}`);
       }
     };
 
