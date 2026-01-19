@@ -16,17 +16,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, addDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { Audio } from "expo-av";
 import * as Haptics from "expo-haptics";
-import * as IAP from "react-native-iap";
 import { auth, db } from "../src/lib/firebase";
 import { type ThemeId, getTheme } from "../src/lib/themes";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-
-// In-app purchase product IDs
-const PRODUCT_IDS = Platform.select({
-  ios: ['com.stanclickin.app.extralife'],
-  android: ['extralife'],
-}) || [];
 
 // Game constants - tuned for fun gameplay
 const GRAVITY = 0.4;
@@ -139,76 +132,6 @@ export default function FlappyClickin() {
 
     return () => {
       backgroundMusic.current?.unloadAsync();
-    };
-  }, []);
-
-  // Initialize IAP connection and set up listeners
-  useEffect(() => {
-    const initIAP = async () => {
-      try {
-        await IAP.initConnection();
-        console.log("IAP connection initialized");
-
-        // Get available products
-        const products = await IAP.getProducts({ skus: PRODUCT_IDS });
-        console.log("Available products:", products);
-
-        // DEBUG: Show products in alert
-        if (products.length === 0) {
-          Alert.alert("IAP Debug", `No products found!\nSearched for: ${PRODUCT_IDS[0]}`);
-        } else {
-          Alert.alert("IAP Debug", `Found ${products.length} product(s):\n${products.map(p => p.productId).join(', ')}`);
-        }
-      } catch (error) {
-        console.error("Error initializing IAP:", error);
-        // DEBUG: Show initialization error
-        Alert.alert("IAP Init Error", `${error}`);
-      }
-    };
-
-    initIAP();
-
-    // Set up purchase listeners (MUST be set up before any purchase is made)
-    const purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase) => {
-      console.log("Purchase update received:", purchase);
-      const receipt = purchase.transactionReceipt;
-      if (receipt) {
-        try {
-          if (Platform.OS === 'android') {
-            await IAP.acknowledgePurchaseAndroid({ purchaseToken: purchase.purchaseToken! });
-          }
-          await IAP.finishTransaction({ purchase });
-
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert(
-            "Purchase Successful! 💰",
-            "Extra life granted with 3s invincibility!",
-            [
-              {
-                text: "Let's Go!",
-                onPress: () => {
-                  grantLife();
-                }
-              }
-            ]
-          );
-        } catch (ackErr) {
-          console.error("Error acknowledging purchase:", ackErr);
-        }
-      }
-    });
-
-    const purchaseErrorSubscription = IAP.purchaseErrorListener((error) => {
-      console.error("Purchase error:", error);
-      if (error.code !== 'E_USER_CANCELLED') {
-        Alert.alert("Purchase Failed", "Could not complete purchase. Please try again.");
-      }
-    });
-
-    return () => {
-      purchaseUpdateSubscription.remove();
-      purchaseErrorSubscription.remove();
-      IAP.endConnection();
     };
   }, []);
 
@@ -587,62 +510,6 @@ ${top5}
     }
   };
 
-  // Purchase a life ($0.99)
-  const purchaseLife = async () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      console.log("Requesting purchase for:", PRODUCT_IDS[0]);
-      await IAP.requestPurchase({ sku: PRODUCT_IDS[0] });
-      // Listeners set up in useEffect will handle the purchase result
-    } catch (error) {
-      console.error("Error initiating purchase:", error);
-      Alert.alert("Purchase Error", "Could not start purchase. Please try again.");
-    }
-  };
-
-  // Grant life after successful purchase
-  const grantLife = () => {
-    // IMPORTANT: Set invincibility FIRST before resuming game
-    setLives(1);
-    setIsInvincible(true);
-    isInvincibleRef.current = true; // Set ref immediately for collision detection
-    setInvincibilityTimeLeft(3);
-
-    // Clear any existing invincibility timer
-    if (invincibilityInterval.current) {
-      clearInterval(invincibilityInterval.current);
-    }
-
-    // Reset bird position and velocity BEFORE resuming
-    birdY.setValue(SCREEN_HEIGHT / 3);
-    birdRotation.setValue(0);
-    birdVelocity.current = 0;
-
-    // Generate new pipes at CURRENT difficulty level (keeps your earned difficulty)
-    pipes.current = generateInitialPipes(scoreRef.current);
-    setVisiblePipes([...pipes.current]);
-    frameCount.current = 0;
-
-    // Resume game (keep score!) - THIS MUST BE LAST
-    setGameState("playing");
-
-    // Invincibility countdown
-    invincibilityInterval.current = setInterval(() => {
-      setInvincibilityTimeLeft((prev) => {
-        if (prev <= 1) {
-          setIsInvincible(false);
-          isInvincibleRef.current = false; // Clear ref immediately
-          if (invincibilityInterval.current) {
-            clearInterval(invincibilityInterval.current);
-            invincibilityInterval.current = null;
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]} edges={["top"]}>
       {/* Theme background image */}
@@ -829,12 +696,6 @@ ${top5}
                 <Text style={styles.postBtnText}>📢 Post to STANSPACE</Text>
               </Pressable>
             )}
-
-            {/* Buy Life Button */}
-            <Pressable style={styles.purchaseBtn} onPress={purchaseLife}>
-              <Text style={styles.purchaseBtnText}>💰 Buy Life - $0.99</Text>
-              <Text style={styles.purchaseSubtext}>Get 3s invincibility!</Text>
-            </Pressable>
 
             <Pressable style={styles.playAgainBtn} onPress={startGame}>
               <Text style={styles.playAgainText}>Start Over</Text>
