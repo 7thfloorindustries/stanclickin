@@ -79,7 +79,9 @@ export default function RootLayout() {
       const data = response.notification.request.content.data as any;
 
       // Navigate based on notification type
-      if (data.postId) {
+      if (data.conversationId) {
+        router.push(`/messages/${data.conversationId}` as any);
+      } else if (data.postId) {
         router.push({ pathname: '/post' as any, params: { postId: data.postId } });
       } else if (data.type === 'follow' && data.fromUid) {
         router.push({ pathname: '/u/[uid]' as any, params: { uid: data.fromUid } });
@@ -113,6 +115,7 @@ export default function RootLayout() {
       seg0 === "flappyclickin" ||
       seg0 === "post" ||
       seg0 === "settings" ||
+      seg0 === "messages" ||
       seg0 === "u";
 
     if (!user && inAuthedArea) router.replace("/login");
@@ -136,6 +139,7 @@ export default function RootLayout() {
 
       <Stack.Screen name="post" />
       <Stack.Screen name="settings" />
+      <Stack.Screen name="messages" />
       <Stack.Screen name="u/[uid]" />
     </Stack>
   );

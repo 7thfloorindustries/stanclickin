@@ -249,5 +249,54 @@ service cloud.firestore {
       // Any authenticated user can delete tracking events (for cleanup)
       allow delete: if isSignedIn();
     }
+
+    // Conversations collection (for DMs)
+    match /conversations/{conversationId} {
+      // Helper to get the other participant in a conversation
+      function getOtherParticipant(participants, myUid) {
+        return participants[0] == myUid ? participants[1] : participants[0];
+      }
+
+      // Can read if you're a participant and neither user has blocked the other
+      allow read: if isSignedIn()
+        && request.auth.uid in resource.data.participants
+        && !isBlocked(request.auth.uid, getOtherParticipant(resource.data.participants, request.auth.uid));
+
+      // Can create if you're a participant
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.participants;
+
+      // Can update if you're a participant (for unread counts, lastMessage, etc.)
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.participants;
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        // Can read if you're a conversation participant
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+
+        // Can create if you're the sender and a participant
+        allow create: if isSignedIn()
+          && request.auth.uid == request.resource.data.senderId
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+
+        // Can update (for marking as read)
+        allow update: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+      }
+
+      // Typing indicators subcollection
+      match /typing/{uid} {
+        allow read, write: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+      }
+    }
+  }
+
+  // Helper function to check if users have blocked each other
+  function isBlocked(uid1, uid2) {
+    return exists(/databases/$(database)/documents/blocks/$(uid1)/blocked/$(uid2))
+      || exists(/databases/$(database)/documents/blocks/$(uid2)/blocked/$(uid1));
   }
 }
