@@ -36,7 +36,7 @@ export async function createNotification(params: CreateNotificationParams) {
     });
 
     // Send push notification
-    await sendPushNotification(recipientUid, type, fromUsername || 'Someone', text, postId, commentId);
+    await sendPushNotification(recipientUid, type, fromUid, fromUsername || 'Someone', text, postId, commentId);
   } catch (error) {
     console.error("Error creating notification:", error);
     // Don't throw - notifications failing shouldn't break the main action
@@ -152,6 +152,7 @@ async function markEventsAsGrouped(
 async function sendPushNotification(
   recipientUid: string,
   type: NotificationType,
+  fromUid: string,
   fromUsername: string = 'Someone',
   previewText?: string,
   postId?: string,
@@ -198,7 +199,7 @@ async function sendPushNotification(
 
     if (isGroupableType(type) && postId) {
       // Track this event for future grouping
-      await trackNotificationEvent(recipientUid, type, fromUsername, fromUsername, postId);
+      await trackNotificationEvent(recipientUid, type, fromUid, fromUsername, postId);
 
       // Check for recent similar events
       const recentEvents = await getRecentSimilarEvents(recipientUid, type, postId);
@@ -283,7 +284,7 @@ async function sendPushNotification(
     if (retryCount < 2 && isRetryableError(error)) {
       console.log(`[Push] Retrying... (attempt ${retryCount + 1}/2)`);
       await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
-      return sendPushNotification(recipientUid, type, fromUsername, previewText, postId, commentId, retryCount + 1);
+      return sendPushNotification(recipientUid, type, fromUid, fromUsername, previewText, postId, commentId, retryCount + 1);
     }
 
     // Log error to Firestore for monitoring
