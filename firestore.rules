@@ -222,5 +222,17 @@ service cloud.firestore {
       // Users can delete their own bookmarks
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
+
+    // Push notification errors collection (for monitoring)
+    match /push_errors/{errorId} {
+      // Only admins can read push errors
+      allow read: if isAdmin();
+
+      // Any authenticated user can create push error logs
+      allow create: if isSignedIn();
+
+      // Only admins can delete push errors
+      allow delete: if isAdmin();
+    }
   }
 }

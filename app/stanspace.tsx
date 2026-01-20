@@ -26,6 +26,7 @@ import { PostCard, type Post } from "../components/PostCard";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { type ThemeId, getTheme } from "../src/lib/themes";
 import { extractHashtags, extractMentions } from "../src/lib/textUtils";
+import * as Notifications from 'expo-notifications';
 
 function useUsernameCache() {
   const cache = useRef<Record<string, string>>({});
@@ -253,8 +254,12 @@ export default function StanSpace() {
       where("read", "==", false)
     );
 
-    return onSnapshot(q, (snap) => {
-      setUnreadCount(snap.size);
+    return onSnapshot(q, async (snap) => {
+      const count = snap.size;
+      setUnreadCount(count);
+
+      // Update app icon badge
+      await Notifications.setBadgeCountAsync(count);
     });
   }, [me]);
 

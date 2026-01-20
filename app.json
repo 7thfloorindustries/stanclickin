@@ -8,6 +8,12 @@
     "scheme": "stanclickin",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "notification": {
+      "icon": "./assets/images/notification-icon.png",
+      "color": "#111111",
+      "androidMode": "default",
+      "androidCollapsedTitle": "STANCLICKIN"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stanclickin.app",
@@ -20,6 +26,9 @@
       }
     },
     "android": {
+      "permissions": [
+        "NOTIFICATIONS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

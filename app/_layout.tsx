@@ -1,8 +1,11 @@
 import { Stack, useRouter, useSegments } from "expo-router";
 import { useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../src/lib/firebase";
+import * as Notifications from 'expo-notifications';
+import { registerForPushNotificationsAsync, savePushToken } from "../src/lib/pushNotifications";
 
 export default function RootLayout() {
   const router = useRouter();
@@ -40,6 +43,61 @@ export default function RootLayout() {
       unsubAuth();
       if (userDocUnsub.current) userDocUnsub.current();
     };
+  }, []);
+
+  // Register for push notifications when user logs in
+  useEffect(() => {
+    if (!user) return;
+
+    const initPushNotifications = async () => {
+      try {
+        const token = await registerForPushNotificationsAsync();
+        if (token) {
+          await savePushToken(user.uid, token);
+        }
+      } catch (error) {
+        console.error('[Push] Error initializing push notifications:', error);
+      }
+    };
+
+    initPushNotifications();
+  }, [user]);
+
+  // Handle notification received while app is open
+  useEffect(() => {
+    const subscription = Notifications.addNotificationReceivedListener((notification) => {
+      console.log('[Push] Notification received:', notification);
+      // Could show in-app banner here in future
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  // Handle notification tapped (app was closed/background)
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as any;
+
+      // Navigate based on notification type
+      if (data.postId) {
+        router.push({ pathname: '/post' as any, params: { postId: data.postId } });
+      } else if (data.type === 'follow' && data.fromUid) {
+        router.push({ pathname: '/u/[uid]' as any, params: { uid: data.fromUid } });
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  // Clear badge when app comes to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        Notifications.setBadgeCountAsync(0);
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {

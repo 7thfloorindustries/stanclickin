@@ -26,13 +26,22 @@ type User = {
   isAdmin?: boolean;
 };
 
+type PushError = {
+  id: string;
+  recipientUid: string;
+  type: string;
+  error: string;
+  timestamp: any;
+};
+
 export default function AdminPanel() {
   const me = auth.currentUser?.uid;
   const [reports, setReports] = useState<Report[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [pushErrors, setPushErrors] = useState<PushError[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [activeTab, setActiveTab] = useState<"reports" | "users">("reports");
+  const [activeTab, setActiveTab] = useState<"reports" | "users" | "pushErrors">("reports");
 
   // Check if user is admin
   useEffect(() => {
@@ -70,6 +79,17 @@ export default function AdminPanel() {
     return onSnapshot(q, (snap) => {
       const usersData = snap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) })) as User[];
       setUsers(usersData);
+    });
+  }, [isAdmin]);
+
+  // Load push notification errors
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const q = query(collection(db, "push_errors"), orderBy("timestamp", "desc"), limit(50));
+    return onSnapshot(q, (snap) => {
+      const errorsData = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as PushError[];
+      setPushErrors(errorsData);
     });
   }, [isAdmin]);
 
@@ -213,6 +233,14 @@ export default function AdminPanel() {
               Users ({users.length})
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.tab, activeTab === "pushErrors" && styles.tabActive]}
+            onPress={() => setActiveTab("pushErrors")}
+          >
+            <Text style={[styles.tabText, activeTab === "pushErrors" && styles.tabTextActive]}>
+              Push ({pushErrors.length})
+            </Text>
+          </Pressable>
         </View>
 
         {activeTab === "reports" ? (
@@ -267,7 +295,7 @@ export default function AdminPanel() {
           />
         )}
           </>
-        ) : (
+        ) : activeTab === "users" ? (
           <>
             <Text style={styles.sectionTitle}>User Directory</Text>
 
@@ -296,6 +324,37 @@ export default function AdminPanel() {
                     >
                       <Text style={styles.viewProfileText}>View Profile</Text>
                     </Pressable>
+                  </View>
+                )}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>Push Notification Errors (Last 50)</Text>
+
+            {pushErrors.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>✅ No push notification errors</Text>
+                <Text style={[styles.emptyText, { fontSize: 14, marginTop: 8 }]}>
+                  This is good! All push notifications are being delivered successfully.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={pushErrors}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                renderItem={({ item }) => (
+                  <View style={styles.errorCard}>
+                    <View style={styles.errorHeader}>
+                      <Text style={styles.errorType}>{item.type}</Text>
+                      <Text style={styles.errorTime}>
+                        {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : 'Unknown'}
+                      </Text>
+                    </View>
+                    <Text style={styles.errorMessage}>Error: {item.error}</Text>
+                    <Text style={styles.errorUid}>User: {item.recipientUid}</Text>
                   </View>
                 )}
               />
@@ -574,5 +633,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900",
     color: "#111",
+  },
+
+  errorCard: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ff9500",
+    backgroundColor: "#fff9f0",
+    marginBottom: 12,
+  },
+
+  errorHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+
+  errorType: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#fff",
+    backgroundColor: "#ff9500",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+
+  errorTime: {
+    fontSize: 11,
+    color: "#999",
+  },
+
+  errorMessage: {
+    fontSize: 14,
+    color: "#111",
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+
+  errorUid: {
+    fontSize: 12,
+    color: "#666",
+    fontFamily: "monospace",
   },
 });

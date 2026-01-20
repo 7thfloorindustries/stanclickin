@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, TextInput, ScrollView, Keyboard, TouchableWithoutFeedback, Linking } from "react-native";
+import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, TextInput, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Switch } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -22,10 +22,16 @@ export default function Settings() {
   const [savingBio, setSavingBio] = useState(false);
   const [userTheme, setUserTheme] = useState<ThemeId | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [notifPrefs, setNotifPrefs] = useState({
+    likes: true,
+    comments: true,
+    follows: true,
+    reposts: true,
+  });
 
   const theme = getTheme(userTheme);
 
-  // Load user theme
+  // Load user theme and notification preferences
   useEffect(() => {
     if (!me) return;
 
@@ -34,6 +40,11 @@ export default function Settings() {
       if (snap.exists()) {
         const data = snap.data();
         setUserTheme(data?.theme || null);
+
+        // Load notification preferences
+        if (data?.notificationPreferences) {
+          setNotifPrefs(data.notificationPreferences);
+        }
       }
     });
   }, [me]);
@@ -125,6 +136,23 @@ export default function Settings() {
       Alert.alert("Error", error?.message || "Failed to save bio");
     } finally {
       setSavingBio(false);
+    }
+  };
+
+  const updateNotificationPref = async (key: string, value: boolean) => {
+    if (!me) return;
+
+    const newPrefs = { ...notifPrefs, [key]: value };
+    setNotifPrefs(newPrefs);
+
+    try {
+      await updateDoc(doc(db, "users", me), {
+        notificationPreferences: newPrefs,
+      });
+    } catch (error) {
+      console.error("Error updating notification preferences:", error);
+      // Revert on error
+      setNotifPrefs(notifPrefs);
     }
   };
 
@@ -282,6 +310,53 @@ export default function Settings() {
           </Pressable>
         </View>
 
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Push Notifications</Text>
+          <Text style={[styles.sectionDescription, theme.stanPhoto && styles.sectionDescriptionWithBanner]}>
+            Choose which notifications you want to receive
+          </Text>
+
+          <View style={styles.settingRow}>
+            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Likes</Text>
+            <Switch
+              value={notifPrefs.likes}
+              onValueChange={(val) => updateNotificationPref('likes', val)}
+              trackColor={{ false: '#ccc', true: '#111' }}
+              thumbColor="#fff"
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Comments</Text>
+            <Switch
+              value={notifPrefs.comments}
+              onValueChange={(val) => updateNotificationPref('comments', val)}
+              trackColor={{ false: '#ccc', true: '#111' }}
+              thumbColor="#fff"
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Follows</Text>
+            <Switch
+              value={notifPrefs.follows}
+              onValueChange={(val) => updateNotificationPref('follows', val)}
+              trackColor={{ false: '#ccc', true: '#111' }}
+              thumbColor="#fff"
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Reposts</Text>
+            <Switch
+              value={notifPrefs.reposts}
+              onValueChange={(val) => updateNotificationPref('reposts', val)}
+              trackColor={{ false: '#ccc', true: '#111' }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+
         {isAdmin && (
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Admin</Text>
@@ -397,6 +472,27 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
+  },
+  sectionDescription: { fontSize: 14, color: "#999", marginTop: -4 },
+  sectionDescriptionWithBanner: {
+    color: "rgba(255, 255, 255, 0.9)",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+
+  settingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 8,
+  },
+  settingLabel: { fontSize: 16, fontWeight: "600", color: "#111" },
+  settingLabelWithBanner: {
+    color: "#111",
   },
 
   profilePictureSection: { flexDirection: "row", alignItems: "center", gap: 16 },
