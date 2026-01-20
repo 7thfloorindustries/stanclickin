@@ -18,6 +18,12 @@ STANCLICKIN is a creator-owned mobile app for **Stanclickin**, a music artist/Yo
 
 **Monetization Strategy**: In-app purchases in FLAPPYCLICKIN game (extra lives).
 
+**Current Status (as of 2026-01-19)**:
+- Version 1.0.1 submitted to Apple App Store (awaiting review)
+- IAP temporarily removed from this version, will be re-added in 1.0.2
+- Previous rejections resolved: icons fixed, content moderation implemented, video rights documented
+- Bunny CDN hosting active for STANHUB videos
+
 ## Project Overview
 
 STANCLICKIN is a React Native mobile app built with Expo, featuring three main sections:
@@ -76,6 +82,45 @@ Key collections:
   - `createdAt`: Server timestamp
 - `posts/{postId}/likes/{uid}` - Like subcollection for tracking who liked a post
 - `follows/{uid}/following/{followedUid}` - Following relationships
+- `reports/{reportId}` - User reports for content moderation:
+  - `type`: "post" or "comment"
+  - `postId`, `commentId`: IDs of reported content
+  - `reportedBy`: Username of reporter
+  - `reason`: "spam", "harassment", or "inappropriate"
+  - `status`: "pending", "dismissed", or "resolved"
+
+### Content Moderation System
+
+**Required for Apple App Store Guideline 1.2 compliance**
+
+**1. Terms of Service** (`app/login.tsx:21-24`)
+- Users must check ToS acceptance before creating account
+- ToS states zero tolerance for objectionable content
+
+**2. Automated Content Filtering** (Custom regex patterns)
+- Implemented in: `app/stanspace.tsx:318-341`, `app/post.tsx:521-542`, `app/u/[uid].tsx:258-279`
+- Blocks extreme harmful content before posts/comments are created
+- Filters: violence threats, slurs, illegal content, extreme hate speech
+- Regular profanity is allowed (adult/teen audience)
+
+**3. User Reporting System**
+- Report posts: Three-dot menu → "Report" button
+- Report comments: Long-press comment → "Report"
+- Report reasons: Spam, Harassment, Inappropriate content
+- Reports stored in Firestore `/reports` collection
+
+**4. Admin Moderation Panel** (`app/admin.tsx`)
+- Access: Settings → "Admin" section → "Open Admin Panel"
+- View all pending reports in real-time
+- Review reported content before action
+- Delete content or dismiss false reports
+- View user directory
+- Contact information displayed for App Store compliance
+- Admin access controlled by `isAdmin` field in user document
+
+**5. Block Users**
+- Block from user profile pages
+- Blocked users' content hidden from feed
 
 ### Key Patterns
 
@@ -107,3 +152,42 @@ Key settings in `app.json`:
 - Strict mode enabled
 - Uses Expo's base tsconfig
 - Path aliases configured (`@/*` → root)
+
+## External Services
+
+### Bunny CDN (Video Hosting)
+- **Purpose**: Hosts exclusive music videos for STANHUB section
+- **Location**: `app/stanhub.tsx`
+- **CDN URL**: Videos served from Bunny CDN domain
+- **Cost**: Paid hosting service (free trial expired)
+- **Important**: If Bunny account expires, STANHUB will break. Keep account active.
+
+### Firebase
+- **Authentication**: Email/password auth with AsyncStorage persistence
+- **Firestore**: Real-time database for posts, users, follows, reports
+- **Security**: Rules configured in `firestore.rules`
+- **Config**: Public client config in `src/lib/firebase.ts` (not sensitive)
+
+## Version History
+
+### Version 1.0.1 (Current - In Review)
+- **Status**: Submitted to App Store 2026-01-19
+- **Changes from 1.0.0**:
+  - IAP temporarily removed (will return in 1.0.2)
+  - Content moderation system implemented
+  - ToS acceptance required on signup
+  - Report system for posts/comments
+  - Admin moderation panel added
+  - App icons updated
+  - Fixed Firestore security rules for bookmarks, likes, reposts
+
+### Version 1.0.0 (Rejected)
+- **Rejection reasons**:
+  - Guideline 2.3.8: Placeholder app icons
+  - Guideline 1.2: Missing UGC moderation
+  - Guideline 5.2.3: Video content rights not documented
+  - Guideline 2.1: IAP not working properly
+
+## See Also
+- `DEPLOYMENT.md` - Build and submission process
+- `TROUBLESHOOTING.md` - Common issues and solutions
