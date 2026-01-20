@@ -1,4 +1,4 @@
-import { addDoc, collection, serverTimestamp, getDoc, doc, updateDoc } from "firebase/firestore";
+import { addDoc, collection, serverTimestamp, getDoc, doc, updateDoc, query, where, getDocs, writeBatch, Timestamp } from "firebase/firestore";
 import { db } from "./firebase";
 
 export type NotificationType = "post_like" | "post_comment" | "follow" | "comment_like" | "post_repost" | "post_mention";
@@ -40,6 +40,109 @@ export async function createNotification(params: CreateNotificationParams) {
   } catch (error) {
     console.error("Error creating notification:", error);
     // Don't throw - notifications failing shouldn't break the main action
+  }
+}
+
+/**
+ * Interface for notification tracking events
+ */
+interface NotificationEvent {
+  type: NotificationType;
+  postId?: string;
+  fromUid: string;
+  fromUsername: string;
+  createdAt: Timestamp;
+  grouped: boolean;
+}
+
+/**
+ * Check if notification type should be grouped
+ */
+function isGroupableType(type: NotificationType): boolean {
+  return type === 'post_like' || type === 'post_repost';
+}
+
+/**
+ * Get recent similar notification events for grouping
+ */
+async function getRecentSimilarEvents(
+  recipientUid: string,
+  type: NotificationType,
+  postId?: string
+): Promise<NotificationEvent[]> {
+  if (!postId) return [];
+
+  // Query for similar events in the last 60 seconds
+  const sixtySecondsAgo = new Date(Date.now() - 60000);
+
+  const q = query(
+    collection(db, 'notification_tracking', recipientUid, 'events'),
+    where('type', '==', type),
+    where('postId', '==', postId),
+    where('grouped', '==', false),
+    where('createdAt', '>', Timestamp.fromDate(sixtySecondsAgo))
+  );
+
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as NotificationEvent & { id: string }));
+}
+
+/**
+ * Track notification event for grouping
+ */
+async function trackNotificationEvent(
+  recipientUid: string,
+  type: NotificationType,
+  fromUid: string,
+  fromUsername: string,
+  postId?: string
+): Promise<void> {
+  try {
+    await addDoc(collection(db, 'notification_tracking', recipientUid, 'events'), {
+      type,
+      postId: postId || null,
+      fromUid,
+      fromUsername,
+      createdAt: serverTimestamp(),
+      grouped: false,
+    });
+
+    // Clean up old events (older than 5 minutes) to prevent data buildup
+    const fiveMinutesAgo = new Date(Date.now() - 300000);
+    const oldEventsQuery = query(
+      collection(db, 'notification_tracking', recipientUid, 'events'),
+      where('createdAt', '<', Timestamp.fromDate(fiveMinutesAgo))
+    );
+
+    const oldEvents = await getDocs(oldEventsQuery);
+    if (!oldEvents.empty) {
+      const batch = writeBatch(db);
+      oldEvents.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      console.log(`[Push] Cleaned up ${oldEvents.size} old notification events`);
+    }
+  } catch (error) {
+    console.error('[Push] Error tracking notification event:', error);
+    // Don't throw - tracking failure shouldn't block notifications
+  }
+}
+
+/**
+ * Mark events as grouped
+ */
+async function markEventsAsGrouped(
+  recipientUid: string,
+  eventIds: string[]
+): Promise<void> {
+  try {
+    const batch = writeBatch(db);
+    eventIds.forEach(eventId => {
+      const eventRef = doc(db, 'notification_tracking', recipientUid, 'events', eventId);
+      batch.update(eventRef, { grouped: true });
+    });
+    await batch.commit();
+  } catch (error) {
+    console.error('[Push] Error marking events as grouped:', error);
   }
 }
 
@@ -88,8 +191,37 @@ async function sendPushNotification(
       return;
     }
 
-    // Build notification message
-    const message = getNotificationMessage(type, fromUsername, previewText);
+    // Check for grouping opportunity
+    let message;
+    let shouldGroup = false;
+    let groupCount = 1;
+
+    if (isGroupableType(type) && postId) {
+      // Track this event for future grouping
+      await trackNotificationEvent(recipientUid, type, fromUsername, fromUsername, postId);
+
+      // Check for recent similar events
+      const recentEvents = await getRecentSimilarEvents(recipientUid, type, postId);
+
+      if (recentEvents.length >= 1) {
+        // Include current event in count
+        groupCount = recentEvents.length + 1;
+        shouldGroup = true;
+
+        // Mark all previous events as grouped
+        const eventIds = recentEvents.filter((e: any) => e.id).map((e: any) => e.id);
+        if (eventIds.length > 0) {
+          await markEventsAsGrouped(recipientUid, eventIds);
+        }
+
+        console.log(`[Push] Grouping ${groupCount} ${type} notifications`);
+      }
+    }
+
+    // Build notification message (grouped or individual)
+    message = shouldGroup
+      ? getGroupedNotificationMessage(type, groupCount)
+      : getNotificationMessage(type, fromUsername, previewText);
 
     // Send via Expo Push API with timeout
     const controller = new AbortController();
@@ -251,6 +383,36 @@ function getNotificationMessage(
       return {
         title: 'STANCLICKIN',
         body: `${fromUsername} interacted with your content`,
+      };
+  }
+}
+
+/**
+ * Get grouped notification message
+ */
+function getGroupedNotificationMessage(
+  type: NotificationType,
+  count: number
+): { title: string; body: string } {
+  switch (type) {
+    case 'post_like':
+      return {
+        title: 'New Likes',
+        body: count === 2
+          ? '2 people liked your post'
+          : `${count} people liked your post`,
+      };
+    case 'post_repost':
+      return {
+        title: 'New Reposts',
+        body: count === 2
+          ? '2 people reposted your post'
+          : `${count} people reposted your post`,
+      };
+    default:
+      return {
+        title: 'STANCLICKIN',
+        body: `${count} people interacted with your content`,
       };
   }
 }

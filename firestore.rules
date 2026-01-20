@@ -234,5 +234,20 @@ service cloud.firestore {
       // Only admins can delete push errors
       allow delete: if isAdmin();
     }
+
+    // Notification tracking collection (for grouping)
+    match /notification_tracking/{userId}/events/{eventId} {
+      // Users can read their own notification tracking events
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      // Any authenticated user can create tracking events
+      allow create: if isSignedIn();
+
+      // Any authenticated user can update tracking events (for grouping)
+      allow update: if isSignedIn();
+
+      // Any authenticated user can delete tracking events (for cleanup)
+      allow delete: if isSignedIn();
+    }
   }
 }
