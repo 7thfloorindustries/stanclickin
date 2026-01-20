@@ -107,7 +107,22 @@ async function trackNotificationEvent(
       grouped: false,
     });
 
-    // Clean up old events (older than 5 minutes) to prevent data buildup
+    // Cleanup moved to background - run async without awaiting
+    cleanupOldEventsAsync(recipientUid);
+  } catch (error) {
+    console.error('[Push] Error tracking notification event:', error);
+    // Don't throw - tracking failure shouldn't block notifications
+  }
+}
+
+/**
+ * Clean up old notification events (runs in background, non-blocking)
+ */
+async function cleanupOldEventsAsync(recipientUid: string): Promise<void> {
+  try {
+    // Only run cleanup 10% of the time (probabilistic cleanup)
+    if (Math.random() > 0.1) return;
+
     const fiveMinutesAgo = new Date(Date.now() - 300000);
     const oldEventsQuery = query(
       collection(db, 'notification_tracking', recipientUid, 'events'),
@@ -122,8 +137,8 @@ async function trackNotificationEvent(
       console.log(`[Push] Cleaned up ${oldEvents.size} old notification events`);
     }
   } catch (error) {
-    console.error('[Push] Error tracking notification event:', error);
-    // Don't throw - tracking failure shouldn't block notifications
+    console.error('[Push] Error cleaning up old events:', error);
+    // Silent fail - cleanup is non-critical
   }
 }
 
@@ -198,14 +213,11 @@ async function sendPushNotification(
     let groupCount = 1;
 
     if (isGroupableType(type) && postId) {
-      // Track this event for future grouping
-      await trackNotificationEvent(recipientUid, type, fromUid, fromUsername, postId);
-
-      // Check for recent similar events
+      // First, check if there are recent events (fast query)
       const recentEvents = await getRecentSimilarEvents(recipientUid, type, postId);
 
       if (recentEvents.length >= 1) {
-        // Include current event in count
+        // Found events to group with - include current event in count
         groupCount = recentEvents.length + 1;
         shouldGroup = true;
 
@@ -217,6 +229,10 @@ async function sendPushNotification(
 
         console.log(`[Push] Grouping ${groupCount} ${type} notifications`);
       }
+
+      // Track this event AFTER checking (so first notification has zero tracking overhead)
+      // Fire and forget - don't await to avoid blocking push
+      trackNotificationEvent(recipientUid, type, fromUid, fromUsername, postId);
     }
 
     // Build notification message (grouped or individual)
