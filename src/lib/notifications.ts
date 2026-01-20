@@ -1,7 +1,7 @@
 import { addDoc, collection, serverTimestamp, getDoc, doc, updateDoc, query, where, getDocs, writeBatch, Timestamp } from "firebase/firestore";
 import { db } from "./firebase";
 
-export type NotificationType = "post_like" | "post_comment" | "follow" | "comment_like" | "post_repost" | "post_mention";
+export type NotificationType = "post_like" | "post_comment" | "follow" | "comment_like" | "post_repost" | "post_mention" | "dm_message";
 
 export interface CreateNotificationParams {
   recipientUid: string;
@@ -11,6 +11,7 @@ export interface CreateNotificationParams {
   postId?: string;
   commentId?: string;
   text?: string;
+  conversationId?: string;
 }
 
 /**
@@ -18,7 +19,7 @@ export interface CreateNotificationParams {
  * @param params Notification parameters
  */
 export async function createNotification(params: CreateNotificationParams) {
-  const { recipientUid, type, fromUid, fromUsername, postId, commentId, text } = params;
+  const { recipientUid, type, fromUid, fromUsername, postId, commentId, text, conversationId } = params;
 
   // Don't create notifications for your own actions
   if (recipientUid === fromUid) return;
@@ -31,12 +32,13 @@ export async function createNotification(params: CreateNotificationParams) {
       postId: postId || null,
       commentId: commentId || null,
       text: text || null,
+      conversationId: conversationId || null,
       createdAt: serverTimestamp(),
       read: false,
     });
 
     // Send push notification
-    await sendPushNotification(recipientUid, type, fromUid, fromUsername || 'Someone', text, postId, commentId);
+    await sendPushNotification(recipientUid, type, fromUid, fromUsername || 'Someone', text, postId, commentId, conversationId);
   } catch (error) {
     console.error("Error creating notification:", error);
     // Don't throw - notifications failing shouldn't break the main action
@@ -232,6 +234,7 @@ async function sendPushNotification(
   previewText?: string,
   postId?: string,
   commentId?: string,
+  conversationId?: string,
   retryCount: number = 0
 ): Promise<void> {
   try {
@@ -297,6 +300,7 @@ async function sendPushNotification(
           fromUsername,
           postId: postId || null,
           commentId: commentId || null,
+          conversationId: conversationId || null,
         },
         badge: 1,
         priority: 'high',
@@ -348,7 +352,7 @@ async function sendPushNotification(
     if (retryCount < 2 && isRetryableError(error)) {
       console.log(`[Push] Retrying... (attempt ${retryCount + 1}/2)`);
       await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
-      return sendPushNotification(recipientUid, type, fromUid, fromUsername, previewText, postId, commentId, retryCount + 1);
+      return sendPushNotification(recipientUid, type, fromUid, fromUsername, previewText, postId, commentId, conversationId, retryCount + 1);
     }
 
     // Log error to Firestore for monitoring
@@ -443,6 +447,11 @@ function getNotificationMessage(
       return {
         title: 'New Repost',
         body: `${fromUsername} reposted your post`,
+      };
+    case 'dm_message':
+      return {
+        title: 'New Message',
+        body: previewText ? `${fromUsername}: ${previewText}` : `${fromUsername} sent you a message`,
       };
     default:
       return {
