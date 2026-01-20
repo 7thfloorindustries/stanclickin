@@ -43,6 +43,7 @@ import { auth, db } from "../src/lib/firebase";
 import { Avatar } from "../components/Avatar";
 import { createNotification } from "../src/lib/notifications";
 import { type ThemeId, getTheme } from "../src/lib/themes";
+import { getGlowStyle } from "../src/lib/animations";
 
 type Comment = {
   id: string;
@@ -223,7 +224,7 @@ const CommentRow = React.memo(function CommentRow({
 
           <View style={styles.actionsRow}>
             <Pressable style={styles.commentActionBtn} onPress={() => onReplyPress(item)}>
-              <Text style={styles.commentActionIcon}>💬</Text>
+              <Text style={styles.commentActionIcon}>◯</Text>
               <Text style={styles.commentActionText}>Reply</Text>
             </Pressable>
 
@@ -978,8 +979,8 @@ export default function PostScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 120 : 0}
       >
-        <View style={[styles.safe, userTheme && theme.stanPhoto && { backgroundColor: "transparent" }]}>
-          <View style={[styles.wrap, userTheme && theme.stanPhoto ? { backgroundColor: "transparent" } : { backgroundColor: "#fff" }]}>
+        <View style={[styles.safe, { backgroundColor: theme.backgroundColor }, userTheme && theme.stanPhoto && { backgroundColor: "transparent" }]}>
+          <View style={[styles.wrap, { backgroundColor: theme.backgroundColor }, userTheme && theme.stanPhoto && { backgroundColor: "transparent" }]}>
             <View style={styles.navRow}>
             <Pressable style={[styles.backBtn, userTheme && theme.stanPhoto && styles.backBtnWithBanner]} onPress={goBack}>
               <Text style={[styles.backText, userTheme && theme.stanPhoto && styles.backTextWithBanner]}>‹ Back</Text>
@@ -1040,7 +1041,7 @@ export default function PostScreen() {
                         </View>
                       </Pressable>
                       <Pressable onPress={openPostMenu} style={{ padding: 8 }}>
-                        <Text style={{ fontSize: 20, fontWeight: "900", color: "#111" }}>⋯</Text>
+                        <Text style={{ fontSize: 20, fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" }}>...</Text>
                       </Pressable>
                     </View>
                   )}
@@ -1100,7 +1101,7 @@ export default function PostScreen() {
                       </View>
                     </Pressable>
                     <Pressable onPress={openPostMenu} style={{ padding: 8 }}>
-                      <Text style={{ fontSize: 20, fontWeight: "900", color: "#111" }}>⋯</Text>
+                      <Text style={{ fontSize: 20, fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" }}>...</Text>
                     </Pressable>
                   </View>
                 )}
@@ -1159,7 +1160,7 @@ export default function PostScreen() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Text style={[styles.emptyStateText, userTheme && theme.stanPhoto && styles.emptyStateTextWithBanner]}>
-                  No comments yet. Be the first! 💬
+                  No comments yet. Be the first!
                 </Text>
               </View>
             }
@@ -1167,8 +1168,8 @@ export default function PostScreen() {
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                tintColor={userTheme && theme.stanPhoto ? "#fff" : "#111"}
-                colors={["#111"]}
+                tintColor="#fff"
+                colors={["#fff"]}
               />
             }
             onScroll={onScroll}
@@ -1312,7 +1313,7 @@ export default function PostScreen() {
                   ref={inputRef}
                   style={styles.input}
                   placeholder={replyTarget ? `Reply to @${replyTarget.username}…` : "Add a comment…"}
-                  placeholderTextColor="#666"
+                  placeholderTextColor={theme.mutedTextColor}
                   value={draft}
                   onChangeText={setDraft}
                   multiline
@@ -1332,8 +1333,8 @@ export default function PostScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  wrap: { flex: 1, padding: 16, backgroundColor: "#fff" },
+  safe: { flex: 1 },
+  wrap: { flex: 1, padding: 16 },
 
   fixedBackground: {
     position: "absolute",
@@ -1354,12 +1355,12 @@ const styles = StyleSheet.create({
   },
 
   navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  backBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: "#111" },
+  backBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: "#141414" },
   backBtnWithBanner: {
     borderColor: "rgba(255, 255, 255, 0.3)",
     backgroundColor: "rgba(0, 0, 0, 0.3)",
   },
-  backText: { fontWeight: "900", color: "#111" },
+  backText: { fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" },
   backTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.8)",
@@ -1367,30 +1368,30 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
 
-  sortWrap: { flexDirection: "row", borderWidth: 1, borderColor: "#111", borderRadius: 999, overflow: "hidden" },
+  sortWrap: { flexDirection: "row", borderRadius: 12, overflow: "hidden", backgroundColor: "#141414" },
   sortWrapWithBanner: {
     borderColor: "rgba(255, 255, 255, 0.3)",
     backgroundColor: "rgba(0, 0, 0, 0.3)",
   },
-  sortBtn: { paddingVertical: 8, paddingHorizontal: 14, backgroundColor: "#fff" },
-  sortOn: { backgroundColor: "#111" },
+  sortBtn: { paddingVertical: 8, paddingHorizontal: 14, backgroundColor: "transparent" },
+  sortOn: { backgroundColor: "#ff3b30" },
   sortOnWithBanner: { backgroundColor: "rgba(255, 255, 255, 0.2)" },
-  sortText: { fontWeight: "900", color: "#111" },
+  sortText: { fontWeight: "700", color: "#888", fontFamily: "SpaceMono" },
   sortTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.8)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
-  sortTextOn: { color: "#fff" },
+  sortTextOn: { color: "#0a0a0a" },
   sortTextOnWithBanner: { color: "#fff" },
 
-  refreshBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: "#111" },
+  refreshBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, backgroundColor: "#141414" },
   refreshBtnWithBanner: {
     borderColor: "rgba(255, 255, 255, 0.3)",
     backgroundColor: "rgba(0, 0, 0, 0.3)",
   },
-  refreshText: { fontWeight: "900", color: "#111", opacity: 0.8 },
+  refreshText: { fontWeight: "700", color: "#888", fontFamily: "SpaceMono" },
   refreshTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.8)",
@@ -1399,7 +1400,7 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
 
-  h2: { marginTop: 14, marginBottom: 8, fontSize: 16, fontWeight: "800", color: "#111" },
+  h2: { marginTop: 14, marginBottom: 8, fontSize: 16, fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" },
   h2WithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1412,17 +1413,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
   },
-  postBox: { marginTop: 6, borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 12 },
+  postBox: { marginTop: 6, borderRadius: 12, padding: 12, backgroundColor: "#141414" },
   authorInfo: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
-  authorName: { fontSize: 14, fontWeight: "900", color: "#111" },
-  postTimestamp: { fontSize: 12, color: "#111", fontWeight: "600", marginTop: 2 },
+  authorName: { fontSize: 14, fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" },
+  postTimestamp: { fontSize: 12, color: "#888", fontWeight: "600", marginTop: 2, fontFamily: "SpaceMono" },
   authorNameWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
-  postText: { color: "#111", fontSize: 16 },
+  postText: { color: "#fff", fontSize: 16, fontFamily: "SpaceMono" },
   postTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1442,36 +1443,36 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 50,
     right: 20,
-    backgroundColor: "#fff",
+    backgroundColor: "#141414",
     width: 36,
     height: 36,
     borderRadius: 18,
     justifyContent: "center",
     alignItems: "center",
   },
-  closeBtnText: { fontSize: 20, fontWeight: "900", color: "#111" },
+  closeBtnText: { fontSize: 20, fontWeight: "700", color: "#0a0a0a", fontFamily: "SpaceMono" },
 
   commentBlur: {
     borderRadius: 12,
     overflow: "hidden",
     marginBottom: 8,
   },
-  comment: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 10 },
+  comment: { borderRadius: 12, padding: 10, backgroundColor: "#141414" },
   commentWithMargin: { marginBottom: 8 },
-  replyComment: { marginLeft: 18, borderColor: "#eee", backgroundColor: "#fafafa" },
+  replyComment: { marginLeft: 18, backgroundColor: "#1a1a1a" },
 
   // subtle "liked by you" signal
-  likedComment: { borderColor: "#111" },
+  likedComment: { backgroundColor: "#1f1a1a" },
 
   commentTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
-  handle: { fontWeight: "900", color: "#111" },
+  handle: { fontWeight: "700", color: "#fff", fontFamily: "SpaceMono" },
   handleWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },
-  time: { fontSize: 12, color: "#111", fontWeight: "700" },
+  time: { fontSize: 12, color: "#888", fontWeight: "600", fontFamily: "SpaceMono" },
   timeWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1480,14 +1481,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  replyTo: { marginTop: 6, fontSize: 12, color: "#666" },
+  replyTo: { marginTop: 6, fontSize: 12, color: "#888", fontFamily: "SpaceMono" },
   replyToWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },
-  commentText: { color: "#111", marginTop: 6 },
+  commentText: { color: "#fff", marginTop: 6, fontFamily: "SpaceMono" },
   commentTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1503,15 +1504,15 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
   },
-  commentActionIcon: { fontSize: 22, color: "#111" },
-  commentActionIconLiked: { color: "#ff0000" },
-  commentActionText: { fontSize: 14, fontWeight: "700", color: "#111" },
+  commentActionIcon: { fontSize: 22, color: "#888" },
+  commentActionIconLiked: { color: "#ff3b30" },
+  commentActionText: { fontSize: 14, fontWeight: "600", color: "#888", fontFamily: "SpaceMono" },
   commentLikeContent: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
-  commentLikeCount: { fontSize: 14, fontWeight: "700", color: "#111" },
+  commentLikeCount: { fontSize: 14, fontWeight: "600", color: "#888", fontFamily: "SpaceMono" },
 
   emptyState: {
     paddingVertical: 40,
@@ -1520,8 +1521,9 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 16,
-    color: "#666",
+    color: "#888",
     textAlign: "center",
+    fontFamily: "SpaceMono",
   },
   emptyStateTextWithBanner: {
     color: "#fff",
@@ -1531,7 +1533,7 @@ const styles = StyleSheet.create({
   },
 
   toggleRow: { paddingVertical: 8, paddingHorizontal: 10, marginBottom: 8, marginLeft: 2 },
-  toggleText: { fontWeight: "900", color: "#111", opacity: 0.8 },
+  toggleText: { fontWeight: "700", color: "#888", fontFamily: "SpaceMono" },
 
   replyBannerBlur: {
     marginTop: 8,
@@ -1542,28 +1544,26 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#111",
     borderRadius: 12,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f9f9f9",
+    backgroundColor: "#141414",
   },
-  replyBannerText: { fontWeight: "800", color: "#111", marginBottom: 4, fontSize: 14 },
-  replyBannerComment: { fontSize: 13, color: "#666", lineHeight: 18, fontWeight: "500" },
+  replyBannerText: { fontWeight: "700", color: "#fff", marginBottom: 4, fontSize: 14, fontFamily: "SpaceMono" },
+  replyBannerComment: { fontSize: 13, color: "#888", lineHeight: 18, fontWeight: "500", fontFamily: "SpaceMono" },
   replyCancelBtn: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
     justifyContent: "center",
     alignItems: "center",
     marginLeft: 8,
   },
-  replyCancel: { fontWeight: "900", color: "#111", fontSize: 16 },
+  replyCancel: { fontWeight: "700", color: "#fff", fontSize: 16, fontFamily: "SpaceMono" },
 
   doneRow: { marginTop: 8, alignItems: "flex-end" },
-  doneText: { fontWeight: "900", color: "#111", opacity: 0.75 },
+  doneText: { fontWeight: "700", color: "#888", fontFamily: "SpaceMono" },
   doneTextWithBanner: {
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1580,11 +1580,12 @@ const styles = StyleSheet.create({
   },
   charCounter: {
     fontSize: 11,
-    color: "#999",
+    color: "#555",
     textAlign: "right",
     paddingHorizontal: 12,
     paddingBottom: 4,
     fontWeight: "600",
+    fontFamily: "SpaceMono",
   },
   charCounterNearLimit: {
     color: "#ff9500",
@@ -1594,15 +1595,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   composer: { marginTop: 8, flexDirection: "row", gap: 6, alignItems: "center" },
-  input: { flex: 1, minHeight: 32, maxHeight: 100, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#fff", fontSize: 14 },
+  input: { flex: 1, minHeight: 32, maxHeight: 100, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#141414", fontSize: 14, color: "#fff", fontFamily: "SpaceMono" },
   inputWithBanner: {
     borderWidth: 0,
     backgroundColor: "transparent",
   },
-  btn: { backgroundColor: "#111", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
+  btn: { backgroundColor: "#ff3b30", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
   btnDisabled: {
     opacity: 0.4,
-    backgroundColor: "#999",
   },
-  btnText: { color: "#fff", fontWeight: "900", fontSize: 13 },
+  btnText: { color: "#0a0a0a", fontWeight: "700", fontSize: 13, fontFamily: "SpaceMono" },
 });

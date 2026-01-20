@@ -1,7 +1,9 @@
-import React from "react";
-import { View, Text, Modal, Pressable, StyleSheet, ScrollView } from "react-native";
+import React, { useRef } from "react";
+import { View, Text, Modal, Pressable, StyleSheet, ScrollView, Animated } from "react-native";
 import { Image } from "expo-image";
+import * as Haptics from "expo-haptics";
 import { themes, ThemeId, Theme } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 type ThemeSelectorProps = {
   visible: boolean;
@@ -14,7 +16,13 @@ export function ThemeSelector({ visible, currentTheme, onClose, onSelectTheme }:
   const themeList = Object.values(themes);
 
   const handleSelect = (themeId: ThemeId) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onSelectTheme(themeId);
+    onClose();
+  };
+
+  const handleClose = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onClose();
   };
 
@@ -23,9 +31,9 @@ export function ThemeSelector({ visible, currentTheme, onClose, onSelectTheme }:
       <View style={styles.overlay}>
         <View style={styles.modal}>
           <View style={styles.header}>
-            <Text style={styles.title}>Choose Your Theme</Text>
-            <Pressable onPress={onClose}>
-              <Text style={styles.closeBtn}>✕</Text>
+            <Text style={styles.title}>THEMES</Text>
+            <Pressable onPress={handleClose}>
+              <Text style={styles.closeBtn}>x</Text>
             </Pressable>
           </View>
 
@@ -54,63 +62,68 @@ type ThemeCardProps = {
 };
 
 function ThemeCard({ theme, isSelected, onSelect }: ThemeCardProps) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pressHandlers = createPressAnimation(scale);
+
+  const glowShadow = isSelected ? getGlowStyle(theme.glowColor, 12) : {};
+
   return (
-    <Pressable
-      style={[styles.card, isSelected && styles.cardSelected]}
-      onPress={onSelect}
-    >
-      {/* Theme preview with gradient or solid background */}
-      <View
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
         style={[
-          styles.preview,
-          { backgroundColor: theme.backgroundColor },
+          styles.card,
+          { borderColor: isSelected ? theme.primaryColor : "#2a2a2a" },
+          isSelected && glowShadow,
         ]}
+        onPress={onSelect}
+        {...pressHandlers}
       >
-        {theme.stanPhoto && (
-          <Image
-            source={theme.stanPhoto}
-            style={styles.stanImage}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            priority="high"
-            transition={200}
-          />
-        )}
-        {!theme.stanPhoto && (
-          <View style={styles.stanPlaceholder}>
-            <Text style={[styles.placeholderText, { color: theme.textColor }]}>
-              Stan Photo
-            </Text>
+        <View style={[styles.preview, { backgroundColor: theme.backgroundColor }]}>
+          {theme.stanPhoto && (
+            <Image
+              source={theme.stanPhoto}
+              style={styles.stanImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              priority="high"
+              transition={200}
+            />
+          )}
+          {!theme.stanPhoto && (
+            <View style={styles.stanPlaceholder}>
+              <Text style={[styles.placeholderText, { color: theme.textColor }]}>STAN</Text>
+            </View>
+          )}
+
+          <View style={[styles.previewOverlay, { backgroundColor: theme.backgroundColor }]} />
+
+          <View style={styles.swatches}>
+            <View style={[styles.swatch, { backgroundColor: theme.primaryColor, ...getGlowStyle(theme.primaryColor, 6) }]} />
           </View>
-        )}
-
-        {/* Color swatches */}
-        <View style={styles.swatches}>
-          <View style={[styles.swatch, { backgroundColor: theme.primaryColor }]} />
-          <View style={[styles.swatch, { backgroundColor: theme.accentColor }]} />
         </View>
-      </View>
 
-      {/* Theme info */}
-      <View style={styles.cardInfo}>
-        <Text style={styles.themeName}>{theme.name}</Text>
-        <Text style={styles.themeDesc}>{theme.description}</Text>
-        {isSelected && <Text style={styles.selectedBadge}>✓ Active</Text>}
-      </View>
-    </Pressable>
+        <View style={[styles.cardInfo, { backgroundColor: theme.surfaceColor }]}>
+          <Text style={[styles.themeName, { color: theme.textColor }]}>{theme.name}</Text>
+          <Text style={[styles.themeDesc, { color: theme.secondaryTextColor }]}>{theme.description}</Text>
+          {isSelected && (
+            <Text style={[styles.selectedBadge, { color: theme.primaryColor }]}>[ ACTIVE ]</Text>
+          )}
+        </View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
     justifyContent: "flex-end",
   },
   modal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: "#0a0a0a",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     maxHeight: "85%",
     paddingTop: 20,
   },
@@ -122,14 +135,15 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   title: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
+    letterSpacing: 2,
   },
   closeBtn: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
   },
   scrollView: {
     paddingHorizontal: 20,
@@ -140,27 +154,30 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 2,
-    borderColor: "#e0e0e0",
     overflow: "hidden",
-    backgroundColor: "#fff",
-  },
-  cardSelected: {
-    borderColor: "#111",
-    borderWidth: 3,
+    backgroundColor: "#141414",
   },
 
   preview: {
-    height: 200,
+    height: 160,
     position: "relative",
     justifyContent: "center",
     alignItems: "center",
   },
+  previewOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.3,
+  },
   stanImage: {
     width: "100%",
     height: "100%",
-    opacity: 0.85,
+    opacity: 0.7,
   },
   stanPlaceholder: {
     width: "100%",
@@ -170,8 +187,9 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
   placeholderText: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 4,
   },
 
   swatches: {
@@ -182,31 +200,31 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   swatch: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 2,
-    borderColor: "#fff",
+    borderColor: "rgba(255, 255, 255, 0.3)",
   },
 
   cardInfo: {
-    padding: 16,
+    padding: 14,
     gap: 4,
   },
   themeName: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
   },
   themeDesc: {
-    fontSize: 13,
-    color: "#666",
-    marginBottom: 4,
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    letterSpacing: 0.5,
   },
   selectedBadge: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
-    marginTop: 4,
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
+    marginTop: 6,
   },
 });

@@ -1,12 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator, Image, Modal, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Platform, ScrollView, RefreshControl, PanResponder, Animated } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator, Image, Modal, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, ScrollView, RefreshControl, Animated, LayoutAnimation, Platform, UIManager } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useNavigation } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   addDoc,
@@ -21,12 +22,32 @@ import {
   where,
   getDocs,
 } from "firebase/firestore";
+import ReanimatedAnimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedProps,
+  withSpring,
+  withTiming,
+  withSequence,
+  withDelay,
+  withRepeat,
+  Easing as ReanimatedEasing,
+  FadeIn,
+  FadeInDown,
+  SlideInRight,
+  interpolate,
+} from "react-native-reanimated";
 import { auth, db, storage } from "../src/lib/firebase";
 import { PostCard, type Post } from "../components/PostCard";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { type ThemeId, getTheme } from "../src/lib/themes";
 import { extractHashtags, extractMentions } from "../src/lib/textUtils";
-import * as Notifications from 'expo-notifications';
+import { createGlowPulse, createPressAnimation, reanimatedSpringConfigs } from "../src/lib/animations";
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 function useUsernameCache() {
   const cache = useRef<Record<string, string>>({});
@@ -38,6 +59,57 @@ function useUsernameCache() {
     return name;
   };
   return { getUsername };
+}
+
+// Animated gradient background component
+function AnimatedGradientBackground({ theme }: { theme: ReturnType<typeof getTheme> }) {
+  const animProgress = useSharedValue(0);
+
+  useEffect(() => {
+    // 10-second cycle animation
+    animProgress.value = withRepeat(
+      withTiming(1, { duration: 10000, easing: ReanimatedEasing.inOut(ReanimatedEasing.ease) }),
+      -1, // infinite
+      true // reverse
+    );
+  }, []);
+
+  const gradientStyle = useAnimatedStyle(() => {
+    const translateX = interpolate(animProgress.value, [0, 1], [-30, 30]);
+    const translateY = interpolate(animProgress.value, [0, 1], [-20, 20]);
+    const scale = interpolate(animProgress.value, [0, 0.5, 1], [1.1, 1.15, 1.1]);
+
+    return {
+      transform: [
+        { translateX },
+        { translateY },
+        { scale },
+      ],
+    };
+  });
+
+  if (!theme.gradient) return null;
+
+  return (
+    <ReanimatedAnimated.View style={[styles.animatedGradientContainer, gradientStyle]}>
+      <LinearGradient
+        colors={theme.gradient.colors as [string, string, ...string[]]}
+        start={theme.gradient.start}
+        end={theme.gradient.end}
+        style={StyleSheet.absoluteFill}
+      />
+      {/* Subtle color overlay that pulses */}
+      <ReanimatedAnimated.View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: theme.glowColorRgba,
+            opacity: 0.1,
+          },
+        ]}
+      />
+    </ReanimatedAnimated.View>
+  );
 }
 
 export default function StanSpace() {
@@ -69,78 +141,79 @@ export default function StanSpace() {
   const [refreshing, setRefreshing] = useState(false);
   const [userTheme, setUserTheme] = useState<ThemeId | null>(null);
   const [hideGamePosts, setHideGamePosts] = useState(false);
+  const [unreadDMCount, setUnreadDMCount] = useState(0);
 
   const theme = getTheme(userTheme);
 
-  // Swipe down to dismiss search modal
-  const searchModalPan = useRef(new Animated.Value(0)).current;
-  const searchPanResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only respond to downward swipes
-        return gestureState.dy > 5;
-      },
-      onPanResponderMove: (_, gestureState) => {
-        // Only allow downward movement
-        if (gestureState.dy > 0) {
-          searchModalPan.setValue(gestureState.dy);
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        // If swiped down enough or with enough velocity, close the modal
-        if (gestureState.dy > 100 || gestureState.vy > 0.5) {
-          Animated.timing(searchModalPan, {
-            toValue: 500,
-            duration: 200,
-            useNativeDriver: true,
-          }).start(() => {
-            setSearchVisible(false);
-            searchModalPan.setValue(0);
-          });
-        } else {
-          // Snap back to original position
-          Animated.spring(searchModalPan, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        }
-      },
-    })
-  ).current;
+  // Animation values
+  const unreadPulse = useRef(new Animated.Value(0.3)).current;
+  const dmPulse = useRef(new Animated.Value(0.3)).current;
+  const navHomeScale = useRef(new Animated.Value(1)).current;
+  const navNewScale = useRef(new Animated.Value(1)).current;
+  const navFindScale = useRef(new Animated.Value(1)).current;
+  const navMeScale = useRef(new Animated.Value(1)).current;
 
+  // Reanimated badge bounce
+  const badgeScale = useSharedValue(1);
+  const badgeRingScale = useSharedValue(1);
+  const badgeRingOpacity = useSharedValue(0);
+  const prevUnreadCount = useRef(0);
+
+  // Bounce animation when unread count increases
+  useEffect(() => {
+    if (unreadCount > prevUnreadCount.current && unreadCount > 0) {
+      // Badge bounce
+      badgeScale.value = withSequence(
+        withTiming(1.4, { duration: 150 }),
+        withSpring(1, reanimatedSpringConfigs.bouncy)
+      );
+      // Ring expansion
+      badgeRingScale.value = 1;
+      badgeRingOpacity.value = 1;
+      badgeRingScale.value = withTiming(2, { duration: 400, easing: ReanimatedEasing.out(ReanimatedEasing.ease) });
+      badgeRingOpacity.value = withTiming(0, { duration: 400 });
+    }
+    prevUnreadCount.current = unreadCount;
+  }, [unreadCount]);
+
+  const badgeAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: badgeScale.value }],
+  }));
+
+  const badgeRingAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: badgeRingScale.value }],
+    opacity: badgeRingOpacity.value,
+  }));
+
+  // Start pulse animations for unread indicators
+  useEffect(() => {
+    if (unreadCount > 0) {
+      createGlowPulse(unreadPulse).start();
+    } else {
+      unreadPulse.setValue(0.3);
+    }
+  }, [unreadCount]);
+
+  useEffect(() => {
+    if (unreadDMCount > 0) {
+      createGlowPulse(dmPulse).start();
+    } else {
+      dmPulse.setValue(0.3);
+    }
+  }, [unreadDMCount]);
 
   const goMenu = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (navigation?.canGoBack?.()) navigation.goBack();
     else router.replace("/");
   };
 
-  // Load game posts filter preference
-  useEffect(() => {
-    const loadPreference = async () => {
-      try {
-        const value = await AsyncStorage.getItem("hideGamePosts");
-        if (value !== null) {
-          setHideGamePosts(value === "true");
-        }
-      } catch (error) {
-        console.error("Error loading game posts preference:", error);
-      }
-    };
-    loadPreference();
-  }, []);
-
-  // Toggle game posts filter
   const toggleGamePosts = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newValue = !hideGamePosts;
     setHideGamePosts(newValue);
-    try {
-      await AsyncStorage.setItem("hideGamePosts", newValue.toString());
-    } catch (error) {
-      console.error("Error saving game posts preference:", error);
-    }
   };
 
-  // Filter out game posts if hideGamePosts is true
   const isGamePost = (post: Post) => {
     const text = post.text.toLowerCase();
     return text.includes("flappyclickin") || text.includes("flappy") || text.includes("#game");
@@ -151,7 +224,6 @@ export default function StanSpace() {
     return posts.filter((post) => !isGamePost(post));
   }, [posts, hideGamePosts]);
 
-  // Load user theme
   useEffect(() => {
     if (!me) return;
 
@@ -170,10 +242,8 @@ export default function StanSpace() {
     setLoading(true);
 
     if (sortMode === "following") {
-      // Following feed: fetch posts from people you follow
       const fetchFollowingFeed = async () => {
         try {
-          // Get list of users you follow
           const followingSnap = await getDocs(collection(db, "follows", me, "following"));
           const followingUids = followingSnap.docs.map((d) => d.id);
 
@@ -183,13 +253,11 @@ export default function StanSpace() {
             return;
           }
 
-          // Firestore 'in' queries are limited to 10 items, so batch if needed
           const batches: string[][] = [];
           for (let i = 0; i < followingUids.length; i += 10) {
             batches.push(followingUids.slice(i, i + 10));
           }
 
-          // Fetch posts from each batch
           const allPosts: Post[] = [];
           for (const batch of batches) {
             const q = query(
@@ -203,14 +271,13 @@ export default function StanSpace() {
             allPosts.push(...batchPosts);
           }
 
-          // Sort all posts by createdAt
           allPosts.sort((a, b) => {
             const aTime = a.createdAt?.seconds || 0;
             const bTime = b.createdAt?.seconds || 0;
             return bTime - aTime;
           });
 
-          setPosts(allPosts.slice(0, 50)); // Limit to 50 total
+          setPosts(allPosts.slice(0, 50));
           setLoading(false);
         } catch (error) {
           console.error("Error fetching following feed:", error);
@@ -221,19 +288,16 @@ export default function StanSpace() {
 
       fetchFollowingFeed();
 
-      // Set up real-time listener for following feed
       const followingRef = collection(db, "follows", me, "following");
       return onSnapshot(followingRef, () => {
-        fetchFollowingFeed(); // Refetch when following list changes
+        fetchFollowingFeed();
       });
     } else {
-      // Recent or Trending feeds
       let q;
 
       if (sortMode === "recent") {
         q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(50));
       } else {
-        // Trending: most engagement first
         q = query(collection(db, "posts"), orderBy("engagementCount", "desc"), orderBy("createdAt", "desc"), limit(50));
       }
 
@@ -245,7 +309,6 @@ export default function StanSpace() {
     }
   }, [sortMode, me]);
 
-  // Listen for unread notifications count
   useEffect(() => {
     if (!me) return;
 
@@ -257,13 +320,28 @@ export default function StanSpace() {
     return onSnapshot(q, async (snap) => {
       const count = snap.size;
       setUnreadCount(count);
+    });
+  }, [me, unreadDMCount]);
 
-      // Update app icon badge
-      await Notifications.setBadgeCountAsync(count);
+  useEffect(() => {
+    if (!me) return;
+
+    const q = query(
+      collection(db, "conversations"),
+      where("participants", "array-contains", me)
+    );
+
+    return onSnapshot(q, (snap) => {
+      let totalUnread = 0;
+      snap.docs.forEach((doc) => {
+        const data = doc.data();
+        const myUnread = data.unreadCount?.[me] || 0;
+        totalUnread += myUnread;
+      });
+      setUnreadDMCount(totalUnread);
     });
   }, [me]);
 
-  // Load all notifications when modal opens
   useEffect(() => {
     if (!me || !notificationsVisible) return;
 
@@ -320,8 +398,6 @@ export default function StanSpace() {
     const trimmed = text.trim();
     if (!trimmed && !selectedImage) return;
 
-    // Minimal content filter - only blocks extreme harmful content (violence, illegal, hate speech)
-    // Does NOT filter regular profanity - respects free expression
     const extremelyHarmfulPatterns = [
       /k[i1!]ll\s*(you|yourself|urself)/i,
       /murder\s*(you|yourself)/i,
@@ -353,7 +429,6 @@ export default function StanSpace() {
         imageUrl = await uploadImage(selectedImage);
       }
 
-      // Extract hashtags and mentions from text
       const hashtags = extractHashtags(trimmed);
       const mentions = extractMentions(trimmed);
 
@@ -370,20 +445,17 @@ export default function StanSpace() {
         mentions: mentions.length > 0 ? mentions : [],
       };
 
-      // Only add imageUrl if it exists
       if (imageUrl) {
         postData.imageUrl = imageUrl;
       }
 
       const postRef = await addDoc(collection(db, "posts"), postData);
 
-      // Create notifications for mentioned users
       if (mentions.length > 0) {
         const { createNotification } = await import("../src/lib/notifications");
         const userDoc = await getDoc(doc(db, "users", user.uid));
         const username = userDoc.exists() ? userDoc.data()?.username : "user";
 
-        // Look up each mentioned user and create notification
         for (const mentionedUsername of mentions) {
           try {
             const usersRef = collection(db, "users");
@@ -398,7 +470,7 @@ export default function StanSpace() {
                 fromUid: user.uid,
                 fromUsername: username,
                 postId: postRef.id,
-                text: trimmed.substring(0, 100), // Preview of post
+                text: trimmed.substring(0, 100),
               });
             }
           } catch (error) {
@@ -412,39 +484,26 @@ export default function StanSpace() {
       setComposerVisible(false);
       Keyboard.dismiss();
 
-      // Scroll to top to show the new post
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
       setTimeout(() => {
         flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
       }, 500);
     } catch (error: any) {
       console.error("Error creating post:", error);
 
-      // Determine if it's an upload error or post creation error
       const isUploadError = error?.message?.includes("storage") || error?.message?.includes("upload");
       const errorTitle = isUploadError ? "Image Upload Failed" : "Post Failed";
       const errorMessage = isUploadError
         ? "Failed to upload image. Your text and image are saved. Check your connection and try again."
         : (error?.message || "Failed to create post. Your content is saved. Please try again.");
 
-      // Show error with retry option - DON'T clear content!
       Alert.alert(
         errorTitle,
         errorMessage,
         [
-          {
-            text: "Cancel",
-            style: "cancel",
-            onPress: () => {
-              // Keep composer open with content intact
-            }
-          },
-          {
-            text: "Retry",
-            onPress: () => {
-              // Retry immediately
-              createPost();
-            }
-          }
+          { text: "Cancel", style: "cancel" },
+          { text: "Retry", onPress: () => createPost() }
         ]
       );
     } finally {
@@ -453,6 +512,7 @@ export default function StanSpace() {
   };
 
   const openMyProfile = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const uid = auth.currentUser?.uid;
     if (!uid) return;
     router.push(`/u/${uid}`);
@@ -486,7 +546,6 @@ export default function StanSpace() {
     await markNotificationAsRead(notification.id);
     setNotificationsVisible(false);
 
-    // Navigate based on notification type
     if (notification.type === "follow") {
       router.push(`/u/${notification.fromUid}`);
     } else if (notification.postId) {
@@ -498,19 +557,19 @@ export default function StanSpace() {
     const username = notification.fromUsername || "Someone";
     switch (notification.type) {
       case "post_like":
-        return `@${username} liked your post`;
+        return `@${username.toUpperCase()} +1 YOUR POST`;
       case "post_comment":
-        return `@${username} commented: "${notification.text || "..."}"`;
+        return `@${username.toUpperCase()} // "${notification.text || "..."}"`;
       case "follow":
-        return `@${username} started following you`;
+        return `@${username.toUpperCase()} >> FOLLOWING YOU`;
       case "comment_like":
-        return `@${username} liked your comment`;
+        return `@${username.toUpperCase()} +1 YOUR COMMENT`;
       case "post_repost":
-        return `@${username} reposted your post`;
+        return `@${username.toUpperCase()} >> YOUR POST`;
       case "post_mention":
-        return `@${username} mentioned you: "${notification.text || "..."}"`;
+        return `@${username.toUpperCase()} @ YOU: "${notification.text || "..."}"`;
       default:
-        return "New notification";
+        return "NEW NOTIFICATION";
     }
   };
 
@@ -523,10 +582,10 @@ export default function StanSpace() {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return "just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return "NOW";
+    if (diffMins < 60) return `${diffMins}M`;
+    if (diffHours < 24) return `${diffHours}H`;
+    if (diffDays < 7) return `${diffDays}D`;
     return new Date(notifTime).toLocaleDateString();
   };
 
@@ -534,7 +593,6 @@ export default function StanSpace() {
     setRefreshing(true);
 
     if (sortMode === "following") {
-      // Refetch following feed
       try {
         const followingSnap = await getDocs(collection(db, "follows", me!, "following"));
         const followingUids = followingSnap.docs.map((d) => d.id);
@@ -574,8 +632,6 @@ export default function StanSpace() {
         console.error("Error refreshing following feed:", error);
       }
     } else {
-      // For Recent/Trending, the real-time listener handles updates
-      // Just wait a moment to show the refresh animation
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
@@ -589,7 +645,6 @@ export default function StanSpace() {
     try {
       const bookmarksSnap = await getDocs(collection(db, "bookmarks", me, "posts"));
 
-      // Use the bookmark data directly (which contains the post snapshot)
       const posts: Post[] = bookmarksSnap.docs.map((d) => {
         const data = d.data();
         return {
@@ -598,14 +653,13 @@ export default function StanSpace() {
           text: data.text,
           imageUrl: data.imageUrl,
           createdAt: data.createdAt,
-          likeCount: 0, // Will be updated by real-time listener in PostCard
+          likeCount: 0,
           commentCount: 0,
           repostCount: 0,
           engagementCount: 0,
         } as Post;
       });
 
-      // Sort by bookmarked time (most recent first)
       posts.sort((a, b) => {
         const aTime = a.createdAt?.seconds || 0;
         const bTime = b.createdAt?.seconds || 0;
@@ -623,10 +677,8 @@ export default function StanSpace() {
   const loadTrendingHashtags = async () => {
     setLoadingTrending(true);
     try {
-      // Get recent posts (last 100)
       const postsSnap = await getDocs(query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(100)));
 
-      // Count hashtag usage
       const hashtagCount: Record<string, number> = {};
       postsSnap.docs.forEach((doc) => {
         const data = doc.data();
@@ -636,11 +688,10 @@ export default function StanSpace() {
         });
       });
 
-      // Convert to array and sort by count
       const trending = Object.entries(hashtagCount)
         .map(([tag, count]) => ({ tag, count }))
         .sort((a, b) => b.count - a.count)
-        .slice(0, 10); // Top 10
+        .slice(0, 10);
 
       setTrendingHashtags(trending);
     } catch (error) {
@@ -658,17 +709,14 @@ export default function StanSpace() {
 
     setSearching(true);
     try {
-      // Remove @ if present for username search
       const lowerQuery = searchTerm.toLowerCase().replace(/^@/, "");
 
-      // Search users by username
       const usersSnap = await getDocs(collection(db, "users"));
       const matchingUsers = usersSnap.docs
         .map((d) => ({ uid: d.id, ...(d.data() as any) }))
         .filter((u) => u.username?.toLowerCase().includes(lowerQuery))
         .slice(0, 10);
 
-      // Search posts by text content
       const postsSnap = await getDocs(query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(100)));
       const matchingPosts = postsSnap.docs
         .map((d) => ({ id: d.id, ...(d.data() as any) }) as Post)
@@ -683,9 +731,17 @@ export default function StanSpace() {
     }
   };
 
+  const handleNavPress = (action: () => void, scale: Animated.Value) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 0.9, tension: 300, friction: 10, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, tension: 300, friction: 10, useNativeDriver: true }),
+    ]).start();
+    action();
+  };
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]} edges={["top"]}>
-      {/* Fixed background image */}
       {theme.stanPhoto && (
         <>
           <ExpoImage
@@ -699,179 +755,112 @@ export default function StanSpace() {
         </>
       )}
 
-      <View style={[styles.wrap, theme.stanPhoto ? { backgroundColor: "transparent" } : { backgroundColor: theme.backgroundColor }]}>
+      {/* Animated gradient background */}
+      <AnimatedGradientBackground theme={theme} />
+
+      <View style={[styles.wrap, { backgroundColor: theme.stanPhoto ? "transparent" : theme.backgroundColor }]}>
+        {/* Header */}
         <View style={styles.topRow}>
-          <View style={{ flexDirection: "row", gap: 8, position: "absolute", left: 0 }}>
-            <Pressable
-              style={[
-                styles.menuBtn,
-                theme.stanPhoto && styles.menuBtnWithBanner
-              ]}
-              onPress={goMenu}
-            >
-              <Text style={[styles.menuText, theme.stanPhoto && styles.menuTextWithBanner]}>‹ Menu</Text>
-            </Pressable>
+          <Pressable style={styles.menuBtn} onPress={goMenu}>
+            <Text style={[styles.menuText, { color: theme.textColor }]}>{"<"} MENU</Text>
+          </Pressable>
 
+          <Text style={[styles.h1, { color: theme.primaryColor }]}>STANSPACE</Text>
+
+          <View style={styles.headerRight}>
             <Pressable
-              style={[
-                styles.trendingBtn,
-                theme.stanPhoto && styles.trendingBtnWithBanner
-              ]}
+              style={styles.headerBtn}
               onPress={() => {
-                loadTrendingHashtags();
-                setTrendingVisible(true);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/messages");
               }}
             >
-              <Text style={[styles.trendingIcon, theme.stanPhoto && styles.trendingIconWithBanner]}>#</Text>
+              <Text style={[styles.headerBtnText, { color: theme.textColor }]}>MSG</Text>
+              {unreadDMCount > 0 && (
+                <Animated.View style={[styles.pulsingDot, { backgroundColor: theme.primaryColor, opacity: dmPulse }]} />
+              )}
             </Pressable>
-          </View>
 
-          <Text style={[styles.h1, theme.stanPhoto && styles.h1WithBanner]}>STANSPACE</Text>
-
-          <View style={{ flexDirection: "row", gap: 8, position: "absolute", right: 0 }}>
             <Pressable
-              style={[
-                styles.bookmarksBtn,
-                theme.stanPhoto && styles.bookmarksBtnWithBanner
-              ]}
+              style={styles.headerBtn}
               onPress={() => {
-                loadBookmarks();
-                setBookmarksVisible(true);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setNotificationsVisible(true);
               }}
             >
-              <Text style={[styles.bookmarksIcon, theme.stanPhoto && styles.bookmarksIconWithBanner]}>🔖</Text>
-            </Pressable>
-
-            <Pressable
-              style={[
-                styles.notificationsBtn,
-                theme.stanPhoto && styles.notificationsBtnWithBanner
-              ]}
-              onPress={() => setNotificationsVisible(true)}
-            >
-              <Text style={[styles.notificationsIcon, theme.stanPhoto && styles.notificationsIconWithBanner]}>🔔</Text>
-              {unreadCount > 0 && <Text style={styles.notificationsBadge}>{unreadCount}</Text>}
+              <Text style={[styles.headerBtnText, { color: theme.textColor }]}>!</Text>
+              {unreadCount > 0 && (
+                <View style={styles.badgeContainer}>
+                  <ReanimatedAnimated.View style={[styles.badgeRing, { borderColor: theme.primaryColor }, badgeRingAnimatedStyle]} />
+                  <ReanimatedAnimated.View style={[styles.pulsingDot, { backgroundColor: theme.primaryColor }, badgeAnimatedStyle]}>
+                    <Animated.View style={{ opacity: unreadPulse, position: 'absolute', width: '100%', height: '100%', backgroundColor: theme.primaryColor, borderRadius: 10 }} />
+                  </ReanimatedAnimated.View>
+                </View>
+              )}
             </Pressable>
           </View>
         </View>
 
+        {/* Feed Tabs */}
         <View style={styles.feedTabs}>
-          <Pressable
-            style={[
-              styles.feedTab,
-              theme.stanPhoto
-                ? sortMode === "recent"
-                  ? styles.feedTabActiveWithBanner
-                  : styles.feedTabWithBanner
-                : { borderColor: theme.borderColor },
-              !theme.stanPhoto && sortMode === "recent" && styles.feedTabActive,
-            ]}
-            onPress={() => setSortMode("recent")}
-          >
-            <Text
+          {["recent", "trending", "following"].map((mode) => (
+            <Pressable
+              key={mode}
               style={[
-                styles.feedTabText,
-                theme.stanPhoto
-                  ? styles.feedTabTextWithBanner
-                  : sortMode === "recent" && styles.feedTabTextActive,
+                styles.feedTab,
+                { borderColor: sortMode === mode ? theme.primaryColor : theme.borderColor },
+                sortMode === mode && { backgroundColor: theme.surfaceGlow }
               ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setSortMode(mode as any);
+              }}
             >
-              Recent
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.feedTab,
-              theme.stanPhoto
-                ? sortMode === "trending"
-                  ? styles.feedTabActiveWithBanner
-                  : styles.feedTabWithBanner
-                : { borderColor: theme.borderColor },
-              !theme.stanPhoto && sortMode === "trending" && styles.feedTabActive,
-            ]}
-            onPress={() => setSortMode("trending")}
-          >
-            <Text
-              style={[
+              <Text style={[
                 styles.feedTabText,
-                theme.stanPhoto
-                  ? styles.feedTabTextWithBanner
-                  : sortMode === "trending" && styles.feedTabTextActive,
-              ]}
-            >
-              Trending
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.feedTab,
-              theme.stanPhoto
-                ? sortMode === "following"
-                  ? styles.feedTabActiveWithBanner
-                  : styles.feedTabWithBanner
-                : { borderColor: theme.borderColor },
-              !theme.stanPhoto && sortMode === "following" && styles.feedTabActive,
-            ]}
-            onPress={() => setSortMode("following")}
-          >
-            <Text
-              style={[
-                styles.feedTabText,
-                theme.stanPhoto
-                  ? styles.feedTabTextWithBanner
-                  : sortMode === "following" && styles.feedTabTextActive,
-              ]}
-            >
-              Following
-            </Text>
-          </Pressable>
+                { color: sortMode === mode ? theme.primaryColor : theme.secondaryTextColor }
+              ]}>
+                {mode.toUpperCase()}
+              </Text>
+            </Pressable>
+          ))}
         </View>
 
-        {/* Game Posts Filter Toggle */}
+        {/* Game Filter */}
         <Pressable
           style={[
             styles.gameFilterChip,
             {
-              backgroundColor: hideGamePosts ? theme.primaryColor : `${theme.primaryColor}15`,
-              borderColor: theme.primaryColor,
+              backgroundColor: hideGamePosts ? theme.primaryColor : theme.surfaceColor,
+              borderColor: theme.borderColor,
             }
           ]}
           onPress={toggleGamePosts}
         >
-          <Text style={[styles.gameFilterText, { color: hideGamePosts ? "#fff" : theme.primaryColor }]}>
-            🎮 {hideGamePosts ? "Game Posts Hidden" : "Show All Posts"}
+          <Text style={[
+            styles.gameFilterText,
+            { color: hideGamePosts ? theme.backgroundColor : theme.secondaryTextColor }
+          ]}>
+            {hideGamePosts ? "GAME POSTS HIDDEN" : "SHOW ALL"}
           </Text>
         </Pressable>
 
+        {/* Posts List */}
         {loading ? (
           <View style={{ paddingBottom: 80 }}>
-            <PostSkeleton />
-            <PostSkeleton />
-            <PostSkeleton />
+            <PostSkeleton theme={theme} />
+            <PostSkeleton theme={theme} />
+            <PostSkeleton theme={theme} />
           </View>
         ) : posts.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text
-              style={[
-                styles.emptyStateTitle,
-                theme.stanPhoto && styles.emptyStateTitleWithBanner,
-              ]}
-            >
-              {sortMode === "following" ? "No posts yet" : "No posts to show"}
+            <Text style={[styles.emptyStateTitle, { color: theme.textColor }]}>
+              {sortMode === "following" ? "NO POSTS YET" : "EMPTY FEED"}
             </Text>
-            <Text
-              style={[
-                styles.emptyStateText,
-                theme.stanPhoto && styles.emptyStateTextWithBanner,
-              ]}
-            >
+            <Text style={[styles.emptyStateText, { color: theme.secondaryTextColor }]}>
               {sortMode === "following"
-                ? "You're not following anyone yet.\nTap Search to find people to follow!"
-                : sortMode === "trending"
-                ? "No trending posts right now.\nBe the first to post something!"
-                : "No posts yet.\nTap Post to share something!"}
+                ? "FOLLOW USERS TO SEE THEIR POSTS"
+                : "BE THE FIRST TO POST"}
             </Text>
           </View>
         ) : (
@@ -879,221 +868,181 @@ export default function StanSpace() {
             ref={flatListRef}
             data={filteredPosts}
             keyExtractor={(p) => p.id}
-            contentContainerStyle={{ paddingBottom: 80 }}
-            renderItem={({ item }) =>
-              theme.stanPhoto ? (
-                <BlurView
-                  intensity={100}
-                  tint="light"
-                  style={styles.postCardWithBanner}
-                >
-                  <PostCard
-                    post={item}
-                    isDarkTheme={false}
-                  />
-                </BlurView>
-              ) : (
-                <PostCard post={item} />
-              )
-            }
+            contentContainerStyle={{ paddingBottom: 100 }}
+            renderItem={({ item, index }) => (
+              <ReanimatedAnimated.View
+                entering={FadeInDown.delay(index * 50).duration(300).springify()}
+              >
+                <PostCard post={item} theme={theme} />
+              </ReanimatedAnimated.View>
+            )}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                tintColor="#111"
-                colors={["#111"]}
+                tintColor={theme.primaryColor}
+                colors={[theme.primaryColor]}
               />
             }
           />
         )}
 
-        <View style={styles.bottomNav}>
-          <Pressable style={styles.navBtn} onPress={() => {
-            // We're already on stanspace, scroll to top every time
-            if (posts.length > 0) {
-              flatListRef.current?.scrollToIndex({ index: 0, animated: true });
-            }
-          }}>
-            <Text style={styles.navIcon}>🏠</Text>
-            <Text style={styles.navLabel}>Home</Text>
+        {/* Bottom Navigation */}
+        <View style={[styles.bottomNav, { backgroundColor: theme.backgroundColor, borderTopColor: theme.borderColor }]}>
+          <Pressable
+            style={styles.navBtn}
+            onPress={() => handleNavPress(() => {
+              if (posts.length > 0) {
+                flatListRef.current?.scrollToIndex({ index: 0, animated: true });
+              }
+            }, navHomeScale)}
+          >
+            <Animated.Text style={[styles.navIconTypo, { color: theme.textColor, transform: [{ scale: navHomeScale }] }]}>
+              ⌂
+            </Animated.Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>HOME</Text>
           </Pressable>
 
-          <Pressable style={styles.navBtn} onPress={() => setComposerVisible(true)}>
-            <Text style={styles.navIcon}>✎</Text>
-            <Text style={styles.navLabel}>Post</Text>
+          <Pressable
+            style={styles.navBtn}
+            onPress={() => handleNavPress(() => setComposerVisible(true), navNewScale)}
+          >
+            <Animated.Text style={[styles.navIconTypo, { color: theme.primaryColor, transform: [{ scale: navNewScale }] }]}>
+              +
+            </Animated.Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>NEW</Text>
           </Pressable>
 
-          <Pressable style={styles.navBtn} onPress={() => setSearchVisible(true)}>
-            <Text style={styles.navIcon}>🔍</Text>
-            <Text style={styles.navLabel}>Search</Text>
+          <Pressable
+            style={styles.navBtn}
+            onPress={() => handleNavPress(() => setSearchVisible(true), navFindScale)}
+          >
+            <Animated.Text style={[styles.navIconTypo, { color: theme.textColor, transform: [{ scale: navFindScale }] }]}>
+              ◎
+            </Animated.Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>FIND</Text>
           </Pressable>
 
-          <Pressable style={styles.navBtn} onPress={openMyProfile}>
-            <Text style={styles.navIcon}>👤</Text>
-            <Text style={styles.navLabel}>Profile</Text>
+          <Pressable
+            style={styles.navBtn}
+            onPress={() => handleNavPress(openMyProfile, navMeScale)}
+          >
+            <Animated.Text style={[styles.navIconTypo, { color: theme.textColor, transform: [{ scale: navMeScale }] }]}>
+              ◯
+            </Animated.Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>ME</Text>
           </Pressable>
         </View>
 
+        {/* Composer Modal */}
         <Modal visible={composerVisible} animationType="slide" transparent={true}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={{ flex: 1 }}
-          >
+          <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-              <View style={styles.modalOverlay}>
-                {theme.stanPhoto && (
-                  <>
-                    <ExpoImage
-                      source={theme.stanPhoto}
-                      style={styles.modalBackground}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                    />
-                    <View style={styles.modalBackgroundOverlay} />
-                  </>
-                )}
-                <View style={[styles.composerModal, theme.stanPhoto && styles.composerModalWithBanner]}>
+              <BlurView intensity={80} tint="dark" style={styles.modalOverlay}>
+                <View style={[styles.composerModal, { backgroundColor: theme.surfaceColor }]}>
                   <View style={styles.modalHeader}>
-                    <Text style={[styles.modalTitle, theme.stanPhoto && styles.modalTitleWithBanner]}>Create Post</Text>
+                    <Text style={[styles.modalTitle, { color: theme.textColor }]}>NEW POST</Text>
                     <Pressable onPress={() => setComposerVisible(false)}>
-                      <Text style={[styles.modalClose, theme.stanPhoto && styles.modalCloseWithBanner]}>✕</Text>
+                      <Text style={[styles.modalClose, { color: theme.textColor }]}>x</Text>
                     </Pressable>
                   </View>
 
-                  {theme.stanPhoto ? (
-                    <BlurView
-                      intensity={40}
-                      tint={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark" ? "dark" : "light"}
-                      style={styles.inputBlur}
-                    >
-                      <TextInput
-                        style={[styles.input, styles.inputWithBanner]}
-                        placeholder="Post something…"
-                        placeholderTextColor={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark" ? "#ddd" : "#666"}
-                        value={text}
-                        onChangeText={setText}
-                        multiline
-                        autoFocus
-                      />
-                    </BlurView>
-                  ) : (
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Post something…"
-                      value={text}
-                      onChangeText={setText}
-                      multiline
-                      autoFocus
-                    />
-                  )}
+                  <TextInput
+                    style={[styles.input, {
+                      backgroundColor: theme.backgroundColor,
+                      color: theme.textColor,
+                      borderColor: theme.borderColor,
+                    }]}
+                    placeholder="TYPE SOMETHING..."
+                    placeholderTextColor={theme.mutedTextColor}
+                    value={text}
+                    onChangeText={setText}
+                    multiline
+                    autoFocus
+                  />
 
                   {selectedImage && (
-                    <BlurView
-                      intensity={40}
-                      tint={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark" ? "dark" : "light"}
-                      style={styles.imagePreviewBlur}
-                    >
-                      <View style={styles.imagePreviewContainer}>
-                        <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
-                        <Pressable style={styles.removeImageBtn} onPress={() => setSelectedImage(null)}>
-                          <Text style={styles.removeImageText}>✕</Text>
-                        </Pressable>
-                      </View>
-                    </BlurView>
+                    <View style={styles.imagePreviewContainer}>
+                      <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
+                      <Pressable style={[styles.removeImageBtn, { backgroundColor: theme.surfaceColor }]} onPress={() => setSelectedImage(null)}>
+                        <Text style={[styles.removeImageText, { color: theme.textColor }]}>x</Text>
+                      </Pressable>
+                    </View>
                   )}
 
                   <View style={styles.composerActions}>
-                    <Pressable style={styles.imageBtn} onPress={pickImage}>
-                      <Text style={styles.imageBtnText}>📷 Photo/GIF</Text>
+                    <Pressable
+                      style={[styles.imageBtn, { backgroundColor: theme.surfaceGlow, borderColor: theme.borderColor }]}
+                      onPress={pickImage}
+                    >
+                      <Text style={[styles.imageBtnText, { color: theme.textColor }]}>+ IMG</Text>
                     </Pressable>
 
                     <Pressable
-                      style={[styles.btn, (!canPost || uploading) && styles.btnDisabled]}
+                      style={[styles.btn, { backgroundColor: theme.primaryColor }, (!canPost || uploading) && styles.btnDisabled]}
                       onPress={createPost}
                       disabled={!canPost || uploading}
                     >
-                      <Text style={styles.btnText}>{uploading ? "Posting..." : "Post"}</Text>
+                      <Text style={[styles.btnText, { color: theme.backgroundColor }]}>
+                        {uploading ? "..." : "POST"}
+                      </Text>
                     </Pressable>
                   </View>
                 </View>
-              </View>
+              </BlurView>
             </TouchableWithoutFeedback>
           </KeyboardAvoidingView>
         </Modal>
 
-        <Modal
-          visible={searchVisible}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setSearchVisible(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={{ flex: 1 }}
-            keyboardVerticalOffset={0}
-          >
+        {/* Search Modal */}
+        <Modal visible={searchVisible} animationType="slide" transparent={true} onRequestClose={() => setSearchVisible(false)}>
+          <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} keyboardVerticalOffset={0}>
             <Pressable style={styles.modalOverlay} onPress={() => setSearchVisible(false)}>
-              {theme.stanPhoto && (
-                <>
-                  <ExpoImage
-                    source={theme.stanPhoto}
-                    style={styles.modalBackground}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                  />
-                  <View style={styles.modalBackgroundOverlay} />
-                </>
-              )}
-              <Animated.View
-                style={[
-                  styles.searchModal,
-                  theme.stanPhoto && styles.searchModalWithBanner,
-                  { transform: [{ translateY: searchModalPan }] },
-                ]}
-                {...searchPanResponder.panHandlers}
-              >
+              <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+              <View style={[styles.searchModal, { backgroundColor: theme.surfaceColor }]}>
                 <View style={styles.modalHeader}>
-                  <Text style={[styles.modalTitle, theme.stanPhoto && styles.modalTitleWithBanner]}>Search</Text>
+                  <Text style={[styles.modalTitle, { color: theme.textColor }]}>FIND</Text>
                   <Pressable onPress={() => setSearchVisible(false)}>
-                    <Text style={[styles.modalClose, theme.stanPhoto && styles.modalCloseWithBanner]}>✕</Text>
+                    <Text style={[styles.modalClose, { color: theme.textColor }]}>x</Text>
                   </Pressable>
                 </View>
 
                 <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search users or posts..."
+                  style={[styles.searchInput, {
+                    backgroundColor: theme.backgroundColor,
+                    color: theme.textColor,
+                    borderColor: theme.borderColor,
+                  }]}
+                  placeholder="SEARCH USERS OR POSTS..."
+                  placeholderTextColor={theme.mutedTextColor}
                   value={searchQuery}
-                  onChangeText={(text) => {
-                    setSearchQuery(text);
-                    performSearch(text);
+                  onChangeText={(t) => {
+                    setSearchQuery(t);
+                    performSearch(t);
                   }}
                   autoFocus
                   returnKeyType="search"
                   onSubmitEditing={() => Keyboard.dismiss()}
                 />
 
-                {searching && <ActivityIndicator style={{ marginTop: 20 }} />}
+                {searching && <ActivityIndicator style={{ marginTop: 20 }} color={theme.primaryColor} />}
 
                 {!searching && searchQuery.trim() && (
-                  <ScrollView
-                    style={styles.searchResults}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={true}
-                  >
+                  <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
                     {searchResults.users.length > 0 && (
                       <View style={styles.searchSection}>
-                        <Text style={[styles.searchSectionTitle, { color: theme.secondaryTextColor }]}>Users</Text>
+                        <Text style={[styles.searchSectionTitle, { color: theme.secondaryTextColor }]}>USERS</Text>
                         {searchResults.users.map((user) => (
                           <Pressable
                             key={user.uid}
-                            style={[styles.userResult, { borderColor: theme.borderColor }]}
+                            style={[styles.userResult, { borderColor: theme.borderColor, backgroundColor: theme.surfaceGlow }]}
                             onPress={() => {
                               setSearchVisible(false);
                               setSearchQuery("");
                               router.push(`/u/${user.uid}`);
                             }}
                           >
-                            <Text style={[styles.userResultName, { color: theme.textColor }]}>@{user.username}</Text>
+                            <Text style={[styles.userResultName, { color: theme.textColor }]}>@{user.username?.toUpperCase()}</Text>
                             {user.bio && <Text style={[styles.userResultBio, { color: theme.secondaryTextColor }]}>{user.bio}</Text>}
                           </Pressable>
                         ))}
@@ -1102,25 +1051,18 @@ export default function StanSpace() {
 
                     {searchResults.posts.length > 0 && (
                       <View style={styles.searchSection}>
-                        <Text style={styles.searchSectionTitle}>Posts</Text>
+                        <Text style={[styles.searchSectionTitle, { color: theme.secondaryTextColor }]}>POSTS</Text>
                         {searchResults.posts.map((post) => (
                           <Pressable
                             key={post.id}
-                            style={styles.postResult}
+                            style={[styles.postResult, { borderColor: theme.borderColor, backgroundColor: theme.surfaceGlow }]}
                             onPress={() => {
                               setSearchVisible(false);
                               setSearchQuery("");
-                              router.push({
-                                pathname: "/post",
-                                params: {
-                                  postId: post.id,
-                                  text: post.text,
-                                  imageUrl: post.imageUrl || "",
-                                },
-                              });
+                              router.push({ pathname: "/post", params: { postId: post.id, text: post.text, imageUrl: post.imageUrl || "" } });
                             }}
                           >
-                            <Text style={styles.postResultText} numberOfLines={2}>
+                            <Text style={[styles.postResultText, { color: theme.textColor }]} numberOfLines={2}>
                               {post.text}
                             </Text>
                           </Pressable>
@@ -1129,58 +1071,59 @@ export default function StanSpace() {
                     )}
 
                     {searchResults.users.length === 0 && searchResults.posts.length === 0 && (
-                      <Text style={styles.noResults}>No results found</Text>
+                      <Text style={[styles.noResults, { color: theme.mutedTextColor }]}>NO RESULTS</Text>
                     )}
                   </ScrollView>
                 )}
-              </Animated.View>
+              </View>
             </Pressable>
           </KeyboardAvoidingView>
         </Modal>
 
+        {/* Notifications Modal */}
         <Modal visible={notificationsVisible} animationType="slide" transparent={true} onRequestClose={() => setNotificationsVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => setNotificationsVisible(false)}>
-            {theme.stanPhoto && (
-              <>
-                <ExpoImage
-                  source={theme.stanPhoto}
-                  style={styles.modalBackground}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                />
-                <View style={styles.modalBackgroundOverlay} />
-              </>
-            )}
-            <View style={[styles.notificationsModal, theme.stanPhoto && styles.notificationsModalWithBanner]}>
+            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={[styles.notificationsModal, { backgroundColor: theme.surfaceColor }]}>
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, theme.stanPhoto && styles.modalTitleWithBanner]}>Notifications</Text>
-                <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+                <Text style={[styles.modalTitle, { color: theme.textColor }]}>NOTIFICATIONS</Text>
+                <View style={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
                   {unreadCount > 0 && (
                     <Pressable onPress={markAllAsRead}>
-                      <Text style={[styles.markAllRead, theme.stanPhoto && styles.markAllReadWithBanner]}>Mark all read</Text>
+                      <Text style={[styles.markAllRead, { color: theme.primaryColor }]}>MARK READ</Text>
                     </Pressable>
                   )}
                   <Pressable onPress={() => setNotificationsVisible(false)}>
-                    <Text style={[styles.modalClose, theme.stanPhoto && styles.modalCloseWithBanner]}>✕</Text>
+                    <Text style={[styles.modalClose, { color: theme.textColor }]}>x</Text>
                   </Pressable>
                 </View>
               </View>
 
-              <ScrollView style={styles.notificationsList} showsVerticalScrollIndicator={true}>
+              <ScrollView style={styles.notificationsList}>
                 {notifications.length === 0 ? (
-                  <Text style={styles.noNotifications}>No notifications yet</Text>
+                  <Text style={[styles.noNotifications, { color: theme.mutedTextColor }]}>NO NOTIFICATIONS</Text>
                 ) : (
                   notifications.map((notification) => (
                     <Pressable
                       key={notification.id}
-                      style={[styles.notificationItem, !notification.read && styles.notificationItemUnread]}
+                      style={[
+                        styles.notificationItem,
+                        { backgroundColor: theme.surfaceGlow, borderColor: theme.borderColor },
+                        !notification.read && { borderColor: theme.primaryColor }
+                      ]}
                       onPress={() => handleNotificationClick(notification)}
                     >
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.notificationText}>{getNotificationText(notification)}</Text>
-                        <Text style={styles.notificationTime}>{getTimeAgo(notification.createdAt)}</Text>
+                        <Text style={[styles.notificationText, { color: theme.textColor }]}>
+                          {getNotificationText(notification)}
+                        </Text>
+                        <Text style={[styles.notificationTime, { color: theme.mutedTextColor }]}>
+                          {getTimeAgo(notification.createdAt)}
+                        </Text>
                       </View>
-                      {!notification.read && <View style={styles.unreadDot} />}
+                      {!notification.read && (
+                        <View style={[styles.unreadIndicator, { backgroundColor: theme.primaryColor }]} />
+                      )}
                     </Pressable>
                   ))
                 )}
@@ -1189,50 +1132,28 @@ export default function StanSpace() {
           </Pressable>
         </Modal>
 
+        {/* Bookmarks Modal */}
         <Modal visible={bookmarksVisible} animationType="slide" transparent={true} onRequestClose={() => setBookmarksVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => setBookmarksVisible(false)}>
-            {theme.stanPhoto && (
-              <>
-                <ExpoImage
-                  source={theme.stanPhoto}
-                  style={styles.modalBackground}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                />
-                <View style={styles.modalBackgroundOverlay} />
-              </>
-            )}
-            <View style={[styles.bookmarksModal, theme.stanPhoto && styles.bookmarksModalWithBanner]}>
+            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={[styles.bookmarksModal, { backgroundColor: theme.surfaceColor }]}>
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, theme.stanPhoto && styles.modalTitleWithBanner]}>Bookmarks</Text>
+                <Text style={[styles.modalTitle, { color: theme.textColor }]}>BOOKMARKS</Text>
                 <Pressable onPress={() => setBookmarksVisible(false)}>
-                  <Text style={[styles.modalClose, theme.stanPhoto && styles.modalCloseWithBanner]}>✕</Text>
+                  <Text style={[styles.modalClose, { color: theme.textColor }]}>x</Text>
                 </Pressable>
               </View>
 
               {loadingBookmarks ? (
-                <ActivityIndicator style={{ marginTop: 20 }} />
+                <ActivityIndicator style={{ marginTop: 20 }} color={theme.primaryColor} />
               ) : (
-                <ScrollView style={styles.bookmarksList} showsVerticalScrollIndicator={true}>
+                <ScrollView style={styles.bookmarksList}>
                   {bookmarkedPosts.length === 0 ? (
-                    <Text style={styles.noBookmarks}>No bookmarks yet</Text>
+                    <Text style={[styles.noBookmarks, { color: theme.mutedTextColor }]}>NO BOOKMARKS</Text>
                   ) : (
                     bookmarkedPosts.map((post) => (
-                      <View key={post.id} style={{ marginBottom: 10 }}>
-                        {theme.stanPhoto ? (
-                          <BlurView
-                            intensity={50}
-                            tint={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark" ? "dark" : "light"}
-                            style={styles.postCardWithBanner}
-                          >
-                            <PostCard
-                              post={post}
-                              isDarkTheme={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark"}
-                            />
-                          </BlurView>
-                        ) : (
-                          <PostCard post={post} />
-                        )}
+                      <View key={post.id} style={{ marginBottom: 12 }}>
+                        <PostCard post={post} theme={theme} />
                       </View>
                     ))
                   )}
@@ -1242,53 +1163,42 @@ export default function StanSpace() {
           </Pressable>
         </Modal>
 
+        {/* Trending Modal */}
         <Modal visible={trendingVisible} animationType="slide" transparent={true} onRequestClose={() => setTrendingVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => setTrendingVisible(false)}>
-            {theme.stanPhoto && (
-              <>
-                <ExpoImage
-                  source={theme.stanPhoto}
-                  style={styles.modalBackground}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                />
-                <View style={styles.modalBackgroundOverlay} />
-              </>
-            )}
-            <View style={[styles.trendingModal, theme.stanPhoto && styles.trendingModalWithBanner]}>
+            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={[styles.trendingModal, { backgroundColor: theme.surfaceColor }]}>
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, theme.stanPhoto && styles.modalTitleWithBanner]}>Trending Hashtags</Text>
+                <Text style={[styles.modalTitle, { color: theme.textColor }]}>TRENDING #</Text>
                 <Pressable onPress={() => setTrendingVisible(false)}>
-                  <Text style={[styles.modalClose, theme.stanPhoto && styles.modalCloseWithBanner]}>✕</Text>
+                  <Text style={[styles.modalClose, { color: theme.textColor }]}>x</Text>
                 </Pressable>
               </View>
 
               {loadingTrending ? (
-                <ActivityIndicator style={{ marginTop: 20 }} />
+                <ActivityIndicator style={{ marginTop: 20 }} color={theme.primaryColor} />
               ) : (
-                <ScrollView style={styles.trendingList} showsVerticalScrollIndicator={true}>
+                <ScrollView style={styles.trendingList}>
                   {trendingHashtags.length === 0 ? (
-                    <Text style={styles.noTrending}>No trending hashtags yet</Text>
+                    <Text style={[styles.noTrending, { color: theme.mutedTextColor }]}>NO TRENDING TAGS</Text>
                   ) : (
                     trendingHashtags.map((item, index) => (
                       <Pressable
                         key={item.tag}
-                        style={styles.trendingItem}
+                        style={[styles.trendingItem, { backgroundColor: theme.surfaceGlow, borderColor: theme.borderColor }]}
                         onPress={() => {
                           setTrendingVisible(false);
                           router.push({ pathname: "/hashtag", params: { tag: item.tag } });
                         }}
                       >
-                        <View style={styles.trendingRank}>
-                          <Text style={styles.trendingRankText}>{index + 1}</Text>
-                        </View>
+                        <Text style={[styles.trendingRank, { color: theme.primaryColor }]}>{index + 1}</Text>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.trendingTag}>#{item.tag}</Text>
-                          <Text style={styles.trendingCount}>
-                            {item.count} {item.count === 1 ? "post" : "posts"}
+                          <Text style={[styles.trendingTag, { color: theme.textColor }]}>#{item.tag.toUpperCase()}</Text>
+                          <Text style={[styles.trendingCount, { color: theme.secondaryTextColor }]}>
+                            {item.count} {item.count === 1 ? "POST" : "POSTS"}
                           </Text>
                         </View>
-                        <Text style={styles.trendingArrow}>›</Text>
+                        <Text style={[styles.trendingArrow, { color: theme.primaryColor }]}>{">"}</Text>
                       </Pressable>
                     ))
                   )}
@@ -1303,8 +1213,8 @@ export default function StanSpace() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  wrap: { flex: 1, padding: 16, backgroundColor: "#fff" },
+  safe: { flex: 1 },
+  wrap: { flex: 1, padding: 16 },
 
   fixedBackground: {
     position: "absolute",
@@ -1321,160 +1231,125 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
   },
-
-  postCardWithBanner: {
-    borderRadius: 16,
-    padding: 8,
-    marginBottom: 10,
+  animatedGradientContainer: {
+    position: "absolute",
+    top: -50,
+    left: -50,
+    right: -50,
+    bottom: -50,
     overflow: "hidden",
   },
 
-  topRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginBottom: 12, position: "relative" },
-  h1: { fontSize: 22, fontWeight: "900", color: "#111", textAlign: "center" },
-  h1WithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+  topRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  h1: {
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
+  menuBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  menuText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+  headerRight: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  headerBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  headerBtnText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+  badgeContainer: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 10,
+    height: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  badgeRing: {
+    position: "absolute",
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+  },
+  pulsingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
 
-  feedTabs: { flexDirection: "row", gap: 8, marginBottom: 14 },
+  feedTabs: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
   feedTab: {
     flex: 1,
     paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 999,
+    paddingHorizontal: 12,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
     alignItems: "center",
   },
-  feedTabActive: { backgroundColor: "#111" },
-  feedTabText: { fontWeight: "900", color: "#111", fontSize: 13 },
-  feedTabTextActive: { color: "#fff" },
-  feedTabWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.5)",
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
-  },
-  feedTabActiveWithBanner: {
-    borderColor: "#fff",
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
-  },
-  feedTabTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  feedTabText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 11,
+    letterSpacing: 1,
   },
 
-  menuBtn: { paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: "#111", borderRadius: 999 },
-  menuBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  menuText: { fontWeight: "900", color: "#111" },
-  menuTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-
-  trendingBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+  gameFilterChip: {
+    alignSelf: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 999,
+    marginBottom: 12,
   },
-  trendingBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  trendingIcon: { fontSize: 20, fontWeight: "900", color: "#111" },
-  trendingIconWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  gameFilterText: {
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
   },
 
   emptyState: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 40,
     paddingBottom: 100,
   },
   emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111",
-    marginBottom: 12,
-  },
-  emptyStateTitleWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+    fontSize: 16,
+    fontFamily: "SpaceMono-Bold",
+    marginBottom: 8,
+    letterSpacing: 2,
   },
   emptyStateText: {
-    fontSize: 14,
-    color: "#666",
+    fontSize: 12,
+    fontFamily: "SpaceMono",
     textAlign: "center",
-    lineHeight: 20,
-  },
-  emptyStateTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
-  },
-
-  bookmarksBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 999,
-  },
-  bookmarksBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  bookmarksIcon: { fontWeight: "900", fontSize: 16 },
-  bookmarksIconWithBanner: {
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-
-  notificationsBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 999,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  notificationsBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  notificationsIcon: { fontWeight: "900", fontSize: 16 },
-  notificationsIconWithBanner: {
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  notificationsBadge: {
-    color: "#ff0000",
-    fontWeight: "900",
-    fontSize: 14,
+    letterSpacing: 1,
   },
 
   bottomNav: {
@@ -1483,282 +1358,278 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: "row",
-    backgroundColor: "#fff",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
     borderTopWidth: 1,
-    borderTopColor: "#111",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
   },
-  navBtn: { flex: 1, alignItems: "center", gap: 4, justifyContent: "center" },
-  navIcon: { fontSize: 24 },
-  navLabel: { fontSize: 11, fontWeight: "900", color: "#111" },
+  navBtn: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  navIconTypo: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+  },
+  navLabel: {
+    fontSize: 9,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
 
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  modalBackground: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  composerModal: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    gap: 16,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  modalTitle: {
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
+  modalClose: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+  },
+
+  input: {
+    minHeight: 80,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    fontFamily: "SpaceMono",
+    textAlignVertical: "top",
+  },
+  composerActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  imageBtn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  imageBtnText: {
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
+  },
+  btn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  btnDisabled: {
+    opacity: 0.4,
+  },
+  btnText: {
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
+
+  imagePreviewContainer: {
+    position: "relative",
+    width: "100%",
+    height: 200,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  imagePreview: {
     width: "100%",
     height: "100%",
   },
-  modalBackgroundOverlay: {
+  removeImageBtn: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  composerModal: { backgroundColor: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 12 },
-  composerModalWithBanner: {
-    backgroundColor: "transparent",
+  removeImageText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 16,
   },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  modalTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
-  modalTitleWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
-  },
-  modalClose: { fontSize: 24, fontWeight: "900", color: "#111" },
-  modalCloseWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
-  },
-
-  input: { minHeight: 70, borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 12, textAlignVertical: "top" },
-  inputBlur: {
-    borderRadius: 12,
-    overflow: "hidden",
-    marginBottom: 12,
-  },
-  inputWithBanner: {
-    borderWidth: 0,
-    backgroundColor: "transparent",
-    color: "#111",
-  },
-  imagePreviewBlur: {
-    borderRadius: 12,
-    overflow: "hidden",
-    marginBottom: 12,
-  },
-  composerActions: { flexDirection: "row", gap: 10 },
-  imageBtn: { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#111", padding: 12, borderRadius: 12, alignItems: "center" },
-  imageBtnText: { color: "#111", fontWeight: "900" },
-  btn: { flex: 1, backgroundColor: "#111", padding: 12, borderRadius: 12, alignItems: "center" },
-  btnDisabled: { opacity: 0.35 },
-  btnText: { color: "#fff", fontWeight: "900" },
-
-  imagePreviewContainer: { position: "relative", width: "100%", height: 200, borderRadius: 12, overflow: "hidden" },
-  imagePreview: { width: "100%", height: "100%", borderRadius: 12 },
-  removeImageBtn: { position: "absolute", top: 8, right: 8, backgroundColor: "#111", width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  removeImageText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
   searchModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "80%",
   },
-  searchModalWithBanner: {
-    backgroundColor: "transparent",
-  },
   searchInput: {
     borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 12,
+    borderRadius: 8,
     padding: 12,
-    fontSize: 16,
+    fontFamily: "SpaceMono",
     marginBottom: 16,
   },
   searchResults: {
     flex: 1,
     marginBottom: 20,
   },
-  searchSection: { marginBottom: 20 },
-  searchSectionTitle: { fontSize: 14, fontWeight: "900", color: "#666", marginBottom: 8 },
+  searchSection: {
+    marginBottom: 20,
+  },
+  searchSectionTitle: {
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
   userResult: {
     padding: 12,
     borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 12,
+    borderRadius: 8,
     marginBottom: 8,
   },
-  userResultName: { fontSize: 16, fontWeight: "900", color: "#111" },
-  userResultBio: { fontSize: 13, color: "#666", marginTop: 4 },
+  userResultName: {
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+  },
+  userResultBio: {
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    marginTop: 4,
+  },
   postResult: {
     padding: 12,
     borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 12,
+    borderRadius: 8,
     marginBottom: 8,
   },
-  postResultText: { fontSize: 14, color: "#111" },
-  noResults: { textAlign: "center", color: "#999", marginTop: 20, fontSize: 14 },
+  postResultText: {
+    fontSize: 13,
+    fontFamily: "SpaceMono",
+  },
+  noResults: {
+    textAlign: "center",
+    marginTop: 40,
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
 
   notificationsModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "80%",
-  },
-  notificationsModalWithBanner: {
-    backgroundColor: "transparent",
   },
   notificationsList: {
     flex: 1,
-    marginBottom: 20,
+    marginTop: 16,
   },
   markAllRead: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
-    opacity: 0.7,
-  },
-  markAllReadWithBanner: {
-    color: "#fff",
-    opacity: 1,
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
   },
   noNotifications: {
     textAlign: "center",
-    color: "#999",
     marginTop: 40,
-    fontSize: 14,
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
+  notificationItem: {
+    padding: 14,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  notificationText: {
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    marginBottom: 4,
+  },
+  notificationTime: {
+    fontSize: 10,
+    fontFamily: "SpaceMono",
+  },
+  unreadIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
 
   bookmarksModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "80%",
   },
-  bookmarksModalWithBanner: {
-    backgroundColor: "transparent",
-  },
   bookmarksList: {
     flex: 1,
-    marginBottom: 20,
+    marginTop: 16,
   },
   noBookmarks: {
     textAlign: "center",
-    color: "#999",
     marginTop: 40,
-    fontSize: 14,
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
 
   trendingModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "70%",
   },
-  trendingModalWithBanner: {
-    backgroundColor: "transparent",
-  },
   trendingList: {
     flex: 1,
-    marginTop: 10,
+    marginTop: 16,
   },
   noTrending: {
     textAlign: "center",
-    color: "#999",
     marginTop: 40,
-    fontSize: 14,
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
   trendingItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#111",
-    borderRadius: 12,
+    borderRadius: 8,
     marginBottom: 8,
-    backgroundColor: "#fff",
   },
   trendingRank: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#111",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  trendingRankText: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 14,
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    width: 30,
   },
   trendingTag: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
     marginBottom: 2,
   },
   trendingCount: {
-    fontSize: 13,
-    color: "#666",
-    fontWeight: "600",
+    fontSize: 11,
+    fontFamily: "SpaceMono",
   },
   trendingArrow: {
-    fontSize: 24,
-    color: "#111",
-    fontWeight: "900",
-  },
-
-  notificationItem: {
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 12,
-    marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  notificationItemUnread: {
-    borderColor: "#111",
-    backgroundColor: "#f9f9f9",
-  },
-  notificationText: {
-    fontSize: 14,
-    color: "#111",
-    marginBottom: 4,
-  },
-  notificationTime: {
-    fontSize: 12,
-    color: "#999",
-  },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#ff0000",
-  },
-  gameFilterChip: {
-    alignSelf: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 2,
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  gameFilterText: {
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center",
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
   },
 });

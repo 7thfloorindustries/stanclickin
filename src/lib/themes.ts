@@ -5,13 +5,20 @@ export interface Theme {
   name: string;
   description: string;
 
-  // Colors
+  // Core colors (Nothing/TE inspired dark mode)
   backgroundColor: string;
+  surfaceColor: string;
+  surfaceGlow: string;
   primaryColor: string;
   accentColor: string;
   textColor: string;
   secondaryTextColor: string;
+  mutedTextColor: string;
   borderColor: string;
+
+  // Glow colors
+  glowColor: string;
+  glowColorRgba: string;
 
   // Stan photo
   stanPhoto?: any; // require() path - optional until photos are added
@@ -27,17 +34,22 @@ export interface Theme {
 export const themes: Record<ThemeId, Theme> = {
   neon: {
     id: "neon",
-    name: "Neon Dreams",
-    description: "Electric vibes with bold neon colors",
-    backgroundColor: "#c8b5e6",
-    primaryColor: "#ff0000",
-    accentColor: "#ffeb3b",
-    textColor: "#1a0a2e",
-    secondaryTextColor: "#5c4a7a",
-    borderColor: "#ff0000",
+    name: "NEON",
+    description: "Electric red glow",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
+    primaryColor: "#ff3b30",
+    accentColor: "#ff6b60",
+    textColor: "#ffffff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#ff3b30",
+    glowColorRgba: "rgba(255, 59, 48, 0.3)",
     stanPhoto: require("../../assets/themes/neon.png"),
     gradient: {
-      colors: ["#e6d9f5", "#c8b5e6", "#b39ddb"],
+      colors: ["#0a0a0a", "#141414", "#0d0d0d"],
       start: { x: 0, y: 0 },
       end: { x: 0, y: 1 },
     },
@@ -45,17 +57,22 @@ export const themes: Record<ThemeId, Theme> = {
 
   retro: {
     id: "retro",
-    name: "Retro Wave",
-    description: "Cosmic purple dreamscape",
-    backgroundColor: "#1a0033",
+    name: "RETRO",
+    description: "Purple synthwave",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
     primaryColor: "#b366ff",
     accentColor: "#e699ff",
     textColor: "#ffffff",
-    secondaryTextColor: "#d4b3ff",
-    borderColor: "#b366ff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#b366ff",
+    glowColorRgba: "rgba(179, 102, 255, 0.3)",
     stanPhoto: require("../../assets/themes/retro.png"),
     gradient: {
-      colors: ["#0d001a", "#2b0052", "#4d0099"],
+      colors: ["#0a0a0a", "#0d0a14", "#0a0a0a"],
       start: { x: 0, y: 0 },
       end: { x: 0, y: 1 },
     },
@@ -63,43 +80,58 @@ export const themes: Record<ThemeId, Theme> = {
 
   minimalist: {
     id: "minimalist",
-    name: "Minimalist",
-    description: "Clean geometric elegance",
-    backgroundColor: "#f5f1ed",
-    primaryColor: "#1a1a1a",
-    accentColor: "#c9b8a8",
-    textColor: "#1a1a1a",
-    secondaryTextColor: "#736b5e",
-    borderColor: "#c9b8a8",
+    name: "MINIMAL",
+    description: "Clean monochrome",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
+    primaryColor: "#ffffff",
+    accentColor: "#888888",
+    textColor: "#ffffff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#ffffff",
+    glowColorRgba: "rgba(255, 255, 255, 0.2)",
     stanPhoto: require("../../assets/themes/minimalist.png"),
   },
 
   dark: {
     id: "dark",
-    name: "Dark Mode",
-    description: "Moody shadows and solitude",
-    backgroundColor: "#3d3020",
-    primaryColor: "#d4c4a8",
-    accentColor: "#8c7a5e",
-    textColor: "#f5ead6",
-    secondaryTextColor: "#a89985",
-    borderColor: "#8c7a5e",
+    name: "SHADOW",
+    description: "Amber warmth",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
+    primaryColor: "#ffaa00",
+    accentColor: "#ffcc55",
+    textColor: "#ffffff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#ffaa00",
+    glowColorRgba: "rgba(255, 170, 0, 0.3)",
     stanPhoto: require("../../assets/themes/dark.png"),
   },
 
   sunset: {
     id: "sunset",
-    name: "Sunset Vibes",
-    description: "Golden hour streetwear",
-    backgroundColor: "#d9d1c7",
-    primaryColor: "#2a2a2a",
-    accentColor: "#7a8c5c",
-    textColor: "#1a1a1a",
-    secondaryTextColor: "#5c5449",
-    borderColor: "#7a8c5c",
+    name: "SUNSET",
+    description: "Cyber green",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
+    primaryColor: "#00ff88",
+    accentColor: "#66ffaa",
+    textColor: "#ffffff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#00ff88",
+    glowColorRgba: "rgba(0, 255, 136, 0.3)",
     stanPhoto: require("../../assets/themes/sunset.png"),
     gradient: {
-      colors: ["#e8e0d5", "#d9d1c7", "#cfc4b5"],
+      colors: ["#0a0a0a", "#0a0d0a", "#0a0a0a"],
       start: { x: 0, y: 0 },
       end: { x: 0, y: 1 },
     },
@@ -107,28 +139,61 @@ export const themes: Record<ThemeId, Theme> = {
 
   cyberpunk: {
     id: "cyberpunk",
-    name: "Cyberpunk",
-    description: "Neon-lit urban nights",
-    backgroundColor: "#0a1014",
-    primaryColor: "#ff1493",
-    accentColor: "#00d9ff",
-    textColor: "#00d9ff",
-    secondaryTextColor: "#ff69b4",
-    borderColor: "#ff1493",
+    name: "CYBER",
+    description: "Electric blue",
+    backgroundColor: "#0a0a0a",
+    surfaceColor: "#141414",
+    surfaceGlow: "#1a1a1a",
+    primaryColor: "#00d4ff",
+    accentColor: "#66e5ff",
+    textColor: "#ffffff",
+    secondaryTextColor: "#888888",
+    mutedTextColor: "#555555",
+    borderColor: "#2a2a2a",
+    glowColor: "#00d4ff",
+    glowColorRgba: "rgba(0, 212, 255, 0.3)",
     stanPhoto: require("../../assets/themes/cyberpunk.png"),
     gradient: {
-      colors: ["#0a1014", "#1a1f28", "#0d1a26"],
+      colors: ["#0a0a0a", "#0a0d14", "#0a0a0a"],
       start: { x: 0, y: 0 },
       end: { x: 1, y: 1 },
     },
   },
 };
 
-export const defaultTheme: ThemeId = "minimalist";
+export const defaultTheme: ThemeId = "neon";
 
 export function getTheme(themeId?: ThemeId | null): Theme {
   if (!themeId || !themes[themeId]) {
     return themes[defaultTheme];
   }
   return themes[themeId];
+}
+
+// Typography constants for Nothing/TE style
+export const typography = {
+  fontFamily: "SpaceMono",
+  weights: {
+    light: "300" as const,
+    regular: "400" as const,
+    medium: "500" as const,
+    bold: "700" as const,
+  },
+  letterSpacing: {
+    tight: -0.5,
+    normal: 0,
+    wide: 1,
+    extraWide: 2,
+  },
+};
+
+// Common glow shadow styles
+export function getGlowShadow(color: string, intensity: number = 10) {
+  return {
+    shadowColor: color,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: intensity,
+    elevation: intensity,
+  };
 }

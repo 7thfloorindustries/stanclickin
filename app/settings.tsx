@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, TextInput, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Switch } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, TextInput, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Switch, Animated } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -7,10 +7,12 @@ import { signOut } from "firebase/auth";
 import { doc, getDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import { auth, db, storage } from "../src/lib/firebase";
 import { router } from "expo-router";
 import { Avatar } from "../components/Avatar";
 import { type ThemeId, getTheme } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 export default function Settings() {
   const navigation = useNavigation();
@@ -68,6 +70,7 @@ export default function Settings() {
   }, []);
 
   const goBack = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
@@ -253,32 +256,32 @@ export default function Settings() {
         >
           <View style={styles.nav}>
             <Pressable
-              style={[
-                styles.backBtn,
-                theme.stanPhoto && styles.backBtnWithBanner
-              ]}
+              style={[styles.backBtn, { backgroundColor: theme.surfaceColor }]}
               onPress={goBack}
             >
-              <Text style={[styles.backText, theme.stanPhoto && styles.backTextWithBanner]}>‹ Back</Text>
+              <Text style={[styles.backText, { color: theme.textColor }]}>{"<"} BACK</Text>
             </Pressable>
           </View>
 
-          <Text style={[styles.h1, theme.stanPhoto && styles.h1WithBanner]}>Settings</Text>
+          <Text style={[styles.h1, { color: theme.primaryColor }]}>SETTINGS</Text>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Profile Picture</Text>
-          <View style={styles.profilePictureSection}>
-            <Avatar imageUrl={profilePicture} username={username} size={80} />
+          <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>PROFILE PICTURE</Text>
+          <View style={[styles.profilePictureSection, { backgroundColor: theme.surfaceColor }]}>
+            <Avatar imageUrl={profilePicture} username={username} size={80} theme={theme} />
             <Pressable
-              style={[styles.btn, styles.btnSecondary, uploading && styles.btnDisabled]}
-              onPress={changeProfilePicture}
+              style={[styles.changeBtn, { backgroundColor: theme.surfaceGlow }, uploading && styles.btnDisabled]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                changeProfilePicture();
+              }}
               disabled={uploading}
             >
               {uploading ? (
-                <ActivityIndicator color="#111" />
+                <ActivityIndicator color={theme.textColor} />
               ) : (
-                <Text style={styles.btnSecondaryText}>
-                  {profilePicture ? "Change Picture" : "Add Picture"}
+                <Text style={[styles.changeBtnText, { color: theme.textColor }]}>
+                  {profilePicture ? "CHANGE" : "ADD"}
                 </Text>
               )}
             </Pressable>
@@ -286,72 +289,87 @@ export default function Settings() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Bio</Text>
+          <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>BIO</Text>
           <TextInput
-            style={styles.bioInput}
+            style={[styles.bioInput, { backgroundColor: theme.surfaceColor, color: theme.textColor }]}
             placeholder="Tell people about yourself..."
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.mutedTextColor}
             value={bio}
             onChangeText={setBio}
             multiline
             maxLength={150}
           />
-          <Text style={[styles.charCount, theme.stanPhoto && styles.charCountWithBanner]}>{bio.length}/150</Text>
+          <Text style={[styles.charCount, { color: theme.mutedTextColor }]}>{bio.length}/150</Text>
           <Pressable
-            style={[styles.saveBioBtn, savingBio && styles.btnDisabled]}
-            onPress={saveBio}
+            style={[styles.saveBioBtn, { backgroundColor: theme.primaryColor }, savingBio && styles.btnDisabled]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              saveBio();
+            }}
             disabled={savingBio}
           >
             {savingBio ? (
-              <ActivityIndicator color="#111" />
+              <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.saveBioBtnText}>Save Bio</Text>
+              <Text style={styles.saveBioBtnText}>SAVE BIO</Text>
             )}
           </Pressable>
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Push Notifications</Text>
-          <Text style={[styles.sectionDescription, theme.stanPhoto && styles.sectionDescriptionWithBanner]}>
+          <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>PUSH NOTIFICATIONS</Text>
+          <Text style={[styles.sectionDescription, { color: theme.mutedTextColor }]}>
             Choose which notifications you want to receive
           </Text>
 
-          <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Likes</Text>
+          <View style={[styles.settingRow, { backgroundColor: theme.surfaceColor }]}>
+            <Text style={[styles.settingLabel, { color: theme.textColor }]}>Likes</Text>
             <Switch
               value={notifPrefs.likes}
-              onValueChange={(val) => updateNotificationPref('likes', val)}
-              trackColor={{ false: '#ccc', true: '#111' }}
+              onValueChange={(val) => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                updateNotificationPref('likes', val);
+              }}
+              trackColor={{ false: theme.surfaceGlow, true: theme.primaryColor }}
               thumbColor="#fff"
             />
           </View>
 
-          <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Comments</Text>
+          <View style={[styles.settingRow, { backgroundColor: theme.surfaceColor }]}>
+            <Text style={[styles.settingLabel, { color: theme.textColor }]}>Comments</Text>
             <Switch
               value={notifPrefs.comments}
-              onValueChange={(val) => updateNotificationPref('comments', val)}
-              trackColor={{ false: '#ccc', true: '#111' }}
+              onValueChange={(val) => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                updateNotificationPref('comments', val);
+              }}
+              trackColor={{ false: theme.surfaceGlow, true: theme.primaryColor }}
               thumbColor="#fff"
             />
           </View>
 
-          <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Follows</Text>
+          <View style={[styles.settingRow, { backgroundColor: theme.surfaceColor }]}>
+            <Text style={[styles.settingLabel, { color: theme.textColor }]}>Follows</Text>
             <Switch
               value={notifPrefs.follows}
-              onValueChange={(val) => updateNotificationPref('follows', val)}
-              trackColor={{ false: '#ccc', true: '#111' }}
+              onValueChange={(val) => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                updateNotificationPref('follows', val);
+              }}
+              trackColor={{ false: theme.surfaceGlow, true: theme.primaryColor }}
               thumbColor="#fff"
             />
           </View>
 
-          <View style={styles.settingRow}>
-            <Text style={[styles.settingLabel, theme.stanPhoto && styles.settingLabelWithBanner]}>Reposts</Text>
+          <View style={[styles.settingRow, { backgroundColor: theme.surfaceColor }]}>
+            <Text style={[styles.settingLabel, { color: theme.textColor }]}>Reposts</Text>
             <Switch
               value={notifPrefs.reposts}
-              onValueChange={(val) => updateNotificationPref('reposts', val)}
-              trackColor={{ false: '#ccc', true: '#111' }}
+              onValueChange={(val) => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                updateNotificationPref('reposts', val);
+              }}
+              trackColor={{ false: theme.surfaceGlow, true: theme.primaryColor }}
               thumbColor="#fff"
             />
           </View>
@@ -359,52 +377,72 @@ export default function Settings() {
 
         {isAdmin && (
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Admin</Text>
+            <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>ADMIN</Text>
             <Pressable
-              style={[styles.btn, styles.btnSecondary]}
-              onPress={() => router.push("/admin")}
+              style={[styles.adminBtn, { backgroundColor: theme.surfaceColor }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/admin");
+              }}
             >
-              <Text style={styles.btnSecondaryText}>Open Admin Panel</Text>
+              <Text style={[styles.adminBtnText, { color: theme.primaryColor }]}>OPEN ADMIN PANEL</Text>
             </Pressable>
           </View>
         )}
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Support & Legal</Text>
+          <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>SUPPORT & LEGAL</Text>
 
-          <View style={styles.infoBox}>
-            <Text style={styles.infoTitle}>Contact Information</Text>
-            <Text style={styles.infoText}>Support: support@7thfloor.digital</Text>
-            <Text style={styles.infoText}>Moderation: moderation@7thfloor.digital</Text>
+          <View style={[styles.infoBox, { backgroundColor: theme.surfaceColor }]}>
+            <Text style={[styles.infoTitle, { color: theme.textColor }]}>Contact Information</Text>
+            <Text style={[styles.infoText, { color: theme.secondaryTextColor }]}>Support: support@7thfloor.digital</Text>
+            <Text style={[styles.infoText, { color: theme.secondaryTextColor }]}>Moderation: moderation@7thfloor.digital</Text>
           </View>
 
           <Pressable
-            style={[styles.btn, styles.btnSecondary]}
-            onPress={openPrivacyPolicy}
+            style={[styles.linkBtn, { backgroundColor: theme.surfaceColor }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              openPrivacyPolicy();
+            }}
           >
-            <Text style={styles.btnSecondaryText}>Privacy Policy</Text>
+            <Text style={[styles.linkBtnText, { color: theme.textColor }]}>Privacy Policy</Text>
+            <Text style={[styles.linkArrow, { color: theme.mutedTextColor }]}>{">"}</Text>
           </Pressable>
 
           <Pressable
-            style={[styles.btn, styles.btnSecondary]}
-            onPress={openTermsOfService}
+            style={[styles.linkBtn, { backgroundColor: theme.surfaceColor }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              openTermsOfService();
+            }}
           >
-            <Text style={styles.btnSecondaryText}>Terms of Service</Text>
+            <Text style={[styles.linkBtnText, { color: theme.textColor }]}>Terms of Service</Text>
+            <Text style={[styles.linkArrow, { color: theme.mutedTextColor }]}>{">"}</Text>
           </Pressable>
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, theme.stanPhoto && styles.sectionTitleWithBanner]}>Account</Text>
+          <Text style={[styles.sectionTitle, { color: theme.secondaryTextColor }]}>ACCOUNT</Text>
 
-          <Pressable style={styles.btn} onPress={logout}>
-            <Text style={styles.btnText}>Log out</Text>
+          <Pressable
+            style={[styles.btn, { backgroundColor: theme.surfaceColor }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              logout();
+            }}
+          >
+            <Text style={[styles.btnText, { color: theme.textColor }]}>LOG OUT</Text>
           </Pressable>
 
           <Pressable
             style={[styles.btn, styles.btnDanger]}
-            onPress={deleteAccount}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              deleteAccount();
+            }}
           >
-            <Text style={styles.btnDangerText}>Delete Account</Text>
+            <Text style={styles.btnDangerText}>DELETE ACCOUNT</Text>
           </Pressable>
           </View>
         </ScrollView>
@@ -414,9 +452,9 @@ export default function Settings() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1 },
   wrap: { flex: 1 },
-  content: { padding: 16, gap: 24, paddingBottom: 40 },
+  content: { padding: 20, gap: 28, paddingBottom: 40 },
 
   fixedBackground: {
     position: "absolute",
@@ -433,134 +471,156 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(10, 10, 10, 0.8)",
   },
 
-  nav: { marginBottom: 6 },
+  nav: { marginBottom: 10 },
   backBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#111",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
     alignSelf: "flex-start",
   },
-  backBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  backText: { fontWeight: "900", color: "#111" },
-  backTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  backText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
   },
 
-  h1: { fontSize: 28, fontWeight: "900", color: "#111" },
-  h1WithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+  h1: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 3,
+    marginBottom: 8,
   },
 
   section: { gap: 12 },
-  sectionTitle: { fontSize: 16, fontWeight: "900", color: "#666" },
-  sectionTitleWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+  sectionTitle: {
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
   },
-  sectionDescription: { fontSize: 14, color: "#999", marginTop: -4 },
-  sectionDescriptionWithBanner: {
-    color: "rgba(255, 255, 255, 0.9)",
-    textShadowColor: "rgba(0, 0, 0, 0.7)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  sectionDescription: {
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    marginTop: -4,
+    letterSpacing: 0.5,
   },
 
   settingRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: "#f5f5f5",
+    borderRadius: 12,
+  },
+  settingLabel: {
+    fontSize: 14,
+    fontFamily: "SpaceMono",
+    letterSpacing: 0.5,
+  },
+
+  profilePictureSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    padding: 16,
+    borderRadius: 12,
+  },
+
+  changeBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     borderRadius: 8,
   },
-  settingLabel: { fontSize: 16, fontWeight: "600", color: "#111" },
-  settingLabelWithBanner: {
-    color: "#111",
+  changeBtnText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 12,
+    letterSpacing: 1,
   },
-
-  profilePictureSection: { flexDirection: "row", alignItems: "center", gap: 16 },
 
   bioInput: {
-    borderWidth: 1,
-    borderColor: "#111",
     borderRadius: 12,
-    padding: 12,
-    minHeight: 80,
+    padding: 14,
+    minHeight: 100,
     textAlignVertical: "top",
     fontSize: 14,
-    backgroundColor: "#fff",
-    color: "#111",
+    fontFamily: "SpaceMono",
   },
-  charCount: { fontSize: 12, color: "#999", textAlign: "right" },
-  charCountWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+  charCount: {
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    textAlign: "right",
+    letterSpacing: 0.5,
   },
 
-  btn: { backgroundColor: "#111", padding: 14, borderRadius: 12, alignItems: "center" },
-  btnText: { color: "#fff", fontWeight: "900" },
-
-  btnSecondary: {
-    flex: 1,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#111",
-  },
-  btnSecondaryText: { color: "#111", fontWeight: "900" },
-
-  saveBioBtn: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#111",
-    padding: 14,
+  btn: {
+    padding: 16,
     borderRadius: 12,
     alignItems: "center",
   },
-  saveBioBtnText: { color: "#111", fontWeight: "900", fontSize: 16 },
+  btnText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
+  },
+
+  saveBioBtn: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  saveBioBtnText: {
+    color: "#fff",
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
+  },
+
+  adminBtn: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  adminBtnText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
+  },
+
+  linkBtn: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 12,
+  },
+  linkBtnText: {
+    fontFamily: "SpaceMono",
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  linkArrow: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 16,
+  },
 
   infoBox: {
-    padding: 14,
+    padding: 16,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#f9f9f9",
-    gap: 6,
+    gap: 8,
   },
   infoTitle: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 12,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
     marginBottom: 4,
   },
   infoText: {
-    fontSize: 13,
-    color: "#111",
-    fontWeight: "600",
-  },
-  infoNote: {
-    fontSize: 11,
-    color: "#666",
-    marginTop: 8,
-    fontStyle: "italic",
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    letterSpacing: 0.5,
   },
 
   btnDanger: {
@@ -568,7 +628,9 @@ const styles = StyleSheet.create({
   },
   btnDangerText: {
     color: "#fff",
-    fontWeight: "900",
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
   },
 
   btnDisabled: { opacity: 0.5 },

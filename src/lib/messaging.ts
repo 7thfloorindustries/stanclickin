@@ -178,8 +178,8 @@ export async function sendMessage(params: SendMessageParams): Promise<void> {
       fromUid: senderId,
       fromUsername: senderUsername,
       text: messagePreview,
-      conversationId, // Will need to add this to CreateNotificationParams
-    } as any); // Using 'as any' temporarily - we'll update the interface next
+      conversationId,
+    });
   } catch (error) {
     console.error("Error sending message:", error);
     throw error;

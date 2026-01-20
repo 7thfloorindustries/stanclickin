@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, router } from "expo-router";
 import { useNavigation } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   collection,
@@ -25,10 +26,12 @@ import {
 import { auth, db, storage } from "../../src/lib/firebase";
 import { PostCard, type Post } from "../../components/PostCard";
 import { Avatar } from "../../components/Avatar";
+import { DMButton } from "../../components/DMButton";
 import { createNotification } from "../../src/lib/notifications";
 import { PostSkeleton } from "../../components/PostSkeleton";
 import { ThemeSelector } from "../../components/ThemeSelector";
 import { type ThemeId, getTheme, themes } from "../../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../../src/lib/animations";
 
 export default function Profile() {
   const navigation = useNavigation<any>();
@@ -106,6 +109,7 @@ export default function Profile() {
 
   // ✅ Correct back animation when possible; safe fallback when not
   const goBack = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (navigation?.canGoBack?.()) navigation.goBack();
     else router.replace("/stanspace");
   };
@@ -449,6 +453,18 @@ export default function Profile() {
     setRefreshing(false);
   };
 
+  // Handler for when a repost is removed - removes the post from local state immediately
+  const handleRepostRemoved = (postId: string) => {
+    setPosts((prevPosts) => {
+      const post = prevPosts.find((p) => p.id === postId);
+      // Only remove if it was a repost (not the user's own post)
+      if (post && post.repostedByUid === profileUid && post.uid !== profileUid) {
+        return prevPosts.filter((p) => p.id !== postId);
+      }
+      return prevPosts;
+    });
+  };
+
   const loadFollowList = async (type: "followers" | "following") => {
     if (!profileUid) return;
 
@@ -662,19 +678,26 @@ export default function Profile() {
                 </Text>
               ) : null}
               {!isMe && !isBlocked && (
-                <Pressable
-                  style={[
-                    styles.followBtn,
-                    isFollowing
-                      ? { backgroundColor: theme.primaryColor, borderColor: theme.primaryColor }
-                      : { backgroundColor: `${theme.primaryColor}15`, borderColor: theme.primaryColor, borderWidth: 2 },
-                  ]}
-                  onPress={toggleFollow}
-                >
-                  <Text style={[styles.followText, { color: isFollowing ? "#fff" : theme.primaryColor, fontWeight: "700" }]}>
-                    {isFollowing ? "Following" : "Follow"}
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Pressable
+                    style={[
+                      styles.followBtn,
+                      isFollowing
+                        ? { backgroundColor: theme.primaryColor, borderColor: theme.primaryColor }
+                        : { backgroundColor: `${theme.primaryColor}15`, borderColor: theme.primaryColor, borderWidth: 2 },
+                    ]}
+                    onPress={toggleFollow}
+                  >
+                    <Text style={[styles.followText, { color: isFollowing ? "#fff" : theme.primaryColor, fontWeight: "700" }]}>
+                      {isFollowing ? "Following" : "Follow"}
+                    </Text>
+                  </Pressable>
+                  <DMButton
+                    recipientUid={profileUid}
+                    recipientUsername={username}
+                    theme={theme}
+                  />
+                </View>
               )}
               {!isMe && isBlocked && (
                 <Text style={[styles.blockedIndicator, theme.stanPhoto && styles.blockedIndicatorWithBanner]}>
@@ -836,51 +859,58 @@ export default function Profile() {
                     post={item}
                     username={username}
                     isDarkTheme={userTheme === "cyberpunk" || userTheme === "retro" || userTheme === "dark"}
+                    onRepostRemoved={handleRepostRemoved}
                   />
                 </BlurView>
               ) : (
-                <PostCard post={item} username={username} />
+                <PostCard post={item} username={username} onRepostRemoved={handleRepostRemoved} />
               )
             }
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#111" colors={["#111"]} />
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" colors={["#fff"]} />
             }
           />
         )}
 
-        <View style={styles.bottomNav}>
+        <View style={[styles.bottomNav, { backgroundColor: theme.backgroundColor, borderTopColor: theme.borderColor }]}>
           <Pressable style={styles.navBtn} onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             if (navigation?.canGoBack?.()) {
               navigation.goBack();
             } else {
               router.replace("/stanspace");
             }
           }}>
-            <Text style={styles.navIcon}>🏠</Text>
-            <Text style={styles.navLabel}>Home</Text>
-          </Pressable>
-
-          <Pressable style={styles.navBtn} onPress={() => setComposerVisible(true)}>
-            <Text style={styles.navIcon}>✎</Text>
-            <Text style={styles.navLabel}>Post</Text>
-          </Pressable>
-
-          <Pressable style={styles.navBtn} onPress={() => setSearchVisible(true)}>
-            <Text style={styles.navIcon}>🔍</Text>
-            <Text style={styles.navLabel}>Search</Text>
+            <Text style={[styles.navIconTypo, { color: theme.textColor }]}>⌂</Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>HOME</Text>
           </Pressable>
 
           <Pressable style={styles.navBtn} onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setComposerVisible(true);
+          }}>
+            <Text style={[styles.navIconTypo, { color: theme.primaryColor }]}>+</Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>NEW</Text>
+          </Pressable>
+
+          <Pressable style={styles.navBtn} onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setSearchVisible(true);
+          }}>
+            <Text style={[styles.navIconTypo, { color: theme.textColor }]}>◎</Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>FIND</Text>
+          </Pressable>
+
+          <Pressable style={styles.navBtn} onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             if (me && profileUid !== me) {
-              // Navigate to our profile if viewing someone else's
               router.push(`/u/${me}`);
             } else if (filteredPosts.length > 0) {
-              // Already on our profile, scroll to top
               flatListRef.current?.scrollToIndex({ index: 0, animated: true });
             }
           }}>
-            <Text style={styles.navIcon}>👤</Text>
-            <Text style={styles.navLabel}>Profile</Text>
+            <Text style={[styles.navIconTypo, { color: theme.primaryColor }]}>◯</Text>
+            <Text style={[styles.navLabel, { color: theme.mutedTextColor }]}>ME</Text>
           </Pressable>
         </View>
 
@@ -1166,33 +1196,29 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(10, 10, 10, 0.8)",
   },
 
   nav: { marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  backBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
+  backBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   backBtnWithBanner: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 8,
+    backgroundColor: "rgba(20, 20, 20, 0.8)",
   },
-  backText: { fontWeight: "900" },
-  backTextWithBanner: { fontWeight: "900", color: "#ffffff" },
+  backText: { fontFamily: "SpaceMono-Bold", letterSpacing: 1 },
+  backTextWithBanner: { fontFamily: "SpaceMono-Bold", color: "#ffffff", letterSpacing: 1 },
 
-  settingsBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
+  settingsBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   settingsBtnWithBanner: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 8,
+    backgroundColor: "rgba(20, 20, 20, 0.8)",
   },
-  settingsText: { fontWeight: "900", fontSize: 18 },
-  settingsTextWithBanner: { fontWeight: "900", fontSize: 18 },
+  settingsText: { fontFamily: "SpaceMono-Bold", fontSize: 18 },
+  settingsTextWithBanner: { fontFamily: "SpaceMono-Bold", fontSize: 18, color: "#fff" },
 
   profileSection: {
     marginBottom: 0,
@@ -1201,32 +1227,36 @@ const styles = StyleSheet.create({
   },
   profileContent: { flexDirection: "row", gap: 16, alignItems: "flex-start", padding: 16, paddingBottom: 8 },
   profileInfo: { flex: 1, gap: 8 },
-  handle: { fontSize: 22, fontWeight: "900" },
+  handle: { fontSize: 20, fontFamily: "SpaceMono-Bold", letterSpacing: 1 },
   handleWithBanner: {
-    fontSize: 22,
-    fontWeight: "900",
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
+    letterSpacing: 1,
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 10,
   },
-  bio: { fontSize: 14, lineHeight: 20 },
+  bio: { fontSize: 13, fontFamily: "SpaceMono", lineHeight: 20, letterSpacing: 0.5 },
   bioWithBanner: {
-    fontSize: 14,
+    fontSize: 13,
+    fontFamily: "SpaceMono",
     lineHeight: 20,
+    letterSpacing: 0.5,
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
-  followBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, alignSelf: "flex-start" },
-  followText: { fontWeight: "900" },
+  followBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, alignSelf: "flex-start" },
+  followText: { fontFamily: "SpaceMono-Bold", letterSpacing: 1 },
 
   blockedIndicator: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#999",
+    fontSize: 12,
+    fontFamily: "SpaceMono-Bold",
+    color: "#888",
     paddingVertical: 10,
+    letterSpacing: 2,
   },
   blockedIndicatorWithBanner: {
     color: "#fff",
@@ -1243,17 +1273,21 @@ const styles = StyleSheet.create({
 
   stats: { flexDirection: "row", justifyContent: "space-between", marginBottom: 20 },
   statBox: { flex: 1, alignItems: "center" },
-  statNum: { fontWeight: "900", fontSize: 18 },
+  statNum: { fontFamily: "SpaceMono-Bold", fontSize: 18 },
   statNumWithBanner: {
-    fontWeight: "900",
+    fontFamily: "SpaceMono-Bold",
     fontSize: 18,
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
-  statLabel: { opacity: 0.6 },
+  statLabel: { fontFamily: "SpaceMono", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", opacity: 0.6 },
   statLabelWithBanner: {
+    fontFamily: "SpaceMono",
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: "uppercase",
     opacity: 1,
     color: "#fff",
     textShadowColor: "rgba(0, 0, 0, 0.9)",
@@ -1266,26 +1300,22 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
+    borderRadius: 8,
     alignItems: "center",
   },
   filterTabWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.5)",
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    backgroundColor: "rgba(20, 20, 20, 0.6)",
   },
   filterTabActiveWithBanner: {
-    borderColor: "#fff",
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
   },
-  filterTabText: { fontWeight: "900", fontSize: 14 },
+  filterTabText: { fontFamily: "SpaceMono-Bold", fontSize: 12, letterSpacing: 2, textTransform: "uppercase" },
   filterTabTextWithBanner: {
-    fontWeight: "900",
-    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 12,
+    letterSpacing: 2,
+    textTransform: "uppercase",
     color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
 
   bottomNav: {
@@ -1294,36 +1324,43 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: "row",
-    backgroundColor: "#fff",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
     borderTopWidth: 1,
-    borderTopColor: "#111",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
   },
   navBtn: { flex: 1, alignItems: "center", gap: 4, justifyContent: "center" },
   navIcon: { fontSize: 24 },
-  navLabel: { fontSize: 11, fontWeight: "900", color: "#111" },
+  navIconTypo: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+  },
+  navLabel: {
+    fontSize: 9,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
 
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "flex-end" },
   searchModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: "#0a0a0a",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "80%",
   },
   searchModalWithBanner: {
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(10, 10, 10, 0.95)",
   },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  modalTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
-  modalClose: { fontSize: 24, fontWeight: "900", color: "#111" },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  modalTitle: { fontSize: 16, fontFamily: "SpaceMono-Bold", color: "#fff", letterSpacing: 2 },
+  modalClose: { fontSize: 24, fontFamily: "SpaceMono-Bold", color: "#fff" },
   searchInput: {
-    borderWidth: 1,
-    borderColor: "#111",
+    backgroundColor: "#141414",
     borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
+    padding: 14,
+    fontSize: 14,
+    fontFamily: "SpaceMono",
+    color: "#fff",
     marginBottom: 16,
   },
   searchResults: {
@@ -1331,25 +1368,23 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   searchSection: { marginBottom: 20 },
-  searchSectionTitle: { fontSize: 14, fontWeight: "900", color: "#666", marginBottom: 8 },
+  searchSectionTitle: { fontSize: 11, fontFamily: "SpaceMono-Bold", color: "#888", marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" },
   userResult: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#111",
+    padding: 14,
+    backgroundColor: "#141414",
     borderRadius: 12,
     marginBottom: 8,
   },
-  userResultName: { fontSize: 16, fontWeight: "900", color: "#111" },
-  userResultBio: { fontSize: 13, color: "#666", marginTop: 4 },
+  userResultName: { fontSize: 14, fontFamily: "SpaceMono-Bold", color: "#fff", letterSpacing: 0.5 },
+  userResultBio: { fontSize: 12, fontFamily: "SpaceMono", color: "#888", marginTop: 4 },
   postResult: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#111",
+    padding: 14,
+    backgroundColor: "#141414",
     borderRadius: 12,
     marginBottom: 8,
   },
-  postResultText: { fontSize: 14, color: "#111" },
-  noResults: { textAlign: "center", color: "#999", marginTop: 20, fontSize: 14 },
+  postResultText: { fontSize: 13, fontFamily: "SpaceMono", color: "#fff" },
+  noResults: { textAlign: "center", color: "#555", marginTop: 20, fontSize: 13, fontFamily: "SpaceMono", letterSpacing: 1 },
 
   postCardWithBanner: {
     borderRadius: 16,
@@ -1367,23 +1402,26 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   emptyPostsTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
     marginBottom: 10,
     textAlign: "center",
+    letterSpacing: 1,
   },
   emptyPostsText: {
-    fontSize: 14,
-    color: "#666",
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    color: "#888",
     textAlign: "center",
     lineHeight: 20,
+    letterSpacing: 0.5,
   },
 
   followListModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: "#0a0a0a",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: 20,
     height: "80%",
   },
@@ -1394,10 +1432,9 @@ const styles = StyleSheet.create({
   followListItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#111",
+    gap: 14,
+    padding: 14,
+    backgroundColor: "#141414",
     borderRadius: 12,
     marginBottom: 8,
   },
@@ -1405,19 +1442,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   followListName: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
+    letterSpacing: 0.5,
   },
   followListBio: {
-    fontSize: 13,
-    color: "#666",
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    color: "#888",
     marginTop: 2,
   },
 
   // Composer modal styles
-  composerModal: { backgroundColor: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 12 },
-  composerModalWithBanner: { backgroundColor: "transparent" },
+  composerModal: { backgroundColor: "#0a0a0a", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, gap: 12 },
+  composerModalWithBanner: { backgroundColor: "rgba(10, 10, 10, 0.95)" },
   modalBackground: {
     position: "absolute",
     top: 0,
@@ -1433,30 +1472,23 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    backgroundColor: "rgba(10, 10, 10, 0.85)",
   },
   modalTitleWithBanner: {
     color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
   },
   modalCloseWithBanner: {
     color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
   },
-  input: { minHeight: 70, borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 12, textAlignVertical: "top" },
+  input: { minHeight: 70, backgroundColor: "#141414", borderRadius: 12, padding: 14, fontFamily: "SpaceMono", color: "#fff", textAlignVertical: "top" },
   inputBlur: {
     borderRadius: 12,
     overflow: "hidden",
     marginBottom: 12,
   },
   inputWithBanner: {
-    borderWidth: 0,
     backgroundColor: "transparent",
-    color: "#111",
+    color: "#fff",
   },
   imagePreviewContainer: { position: "relative", width: "100%", height: 200, borderRadius: 12, overflow: "hidden" },
   imagePreview: { width: "100%", height: "100%", borderRadius: 12 },
@@ -1465,12 +1497,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 12,
   },
-  removeImageBtn: { position: "absolute", top: 8, right: 8, backgroundColor: "#111", width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  removeImageText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  removeImageBtn: { position: "absolute", top: 8, right: 8, backgroundColor: "#0a0a0a", width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  removeImageText: { color: "#fff", fontFamily: "SpaceMono-Bold", fontSize: 16 },
   composerActions: { flexDirection: "row", gap: 10 },
-  imageBtn: { flex: 1, backgroundColor: "#fff", borderWidth: 1, borderColor: "#111", padding: 12, borderRadius: 12, alignItems: "center" },
-  imageBtnText: { color: "#111", fontWeight: "900" },
-  btn: { flex: 1, backgroundColor: "#111", padding: 12, borderRadius: 12, alignItems: "center" },
-  btnText: { color: "#fff", fontWeight: "900" },
+  imageBtn: { flex: 1, backgroundColor: "#141414", padding: 14, borderRadius: 12, alignItems: "center" },
+  imageBtnText: { color: "#fff", fontFamily: "SpaceMono-Bold", letterSpacing: 1 },
+  btn: { flex: 1, backgroundColor: "#fff", padding: 14, borderRadius: 12, alignItems: "center" },
+  btnText: { color: "#0a0a0a", fontFamily: "SpaceMono-Bold", letterSpacing: 1 },
   btnDisabled: { opacity: 0.35 },
 });

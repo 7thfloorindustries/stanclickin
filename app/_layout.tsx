@@ -1,11 +1,14 @@
 import { Stack, useRouter, useSegments } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
+import { useFonts } from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
 import { auth, db } from "../src/lib/firebase";
-import * as Notifications from 'expo-notifications';
-import { registerForPushNotificationsAsync, savePushToken } from "../src/lib/pushNotifications";
+
+// Keep splash screen visible while loading fonts
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
@@ -16,6 +19,18 @@ export default function RootLayout() {
   const [hasUsername, setHasUsername] = useState<boolean | null>(null);
 
   const userDocUnsub = useRef<null | (() => void)>(null);
+
+  // Load Space Mono font
+  const [fontsLoaded] = useFonts({
+    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+    "SpaceMono-Bold": require("../assets/fonts/SpaceMono-Bold.ttf"),
+  });
+
+  const onLayoutRootView = useCallback(async () => {
+    if (fontsLoaded && ready) {
+      await SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, ready]);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (u) => {
@@ -45,63 +60,6 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Register for push notifications when user logs in
-  useEffect(() => {
-    if (!user) return;
-
-    const initPushNotifications = async () => {
-      try {
-        const token = await registerForPushNotificationsAsync();
-        if (token) {
-          await savePushToken(user.uid, token);
-        }
-      } catch (error) {
-        console.error('[Push] Error initializing push notifications:', error);
-      }
-    };
-
-    initPushNotifications();
-  }, [user]);
-
-  // Handle notification received while app is open
-  useEffect(() => {
-    const subscription = Notifications.addNotificationReceivedListener((notification) => {
-      console.log('[Push] Notification received:', notification);
-      // Could show in-app banner here in future
-    });
-
-    return () => subscription.remove();
-  }, []);
-
-  // Handle notification tapped (app was closed/background)
-  useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as any;
-
-      // Navigate based on notification type
-      if (data.conversationId) {
-        router.push(`/messages/${data.conversationId}` as any);
-      } else if (data.postId) {
-        router.push({ pathname: '/post' as any, params: { postId: data.postId } });
-      } else if (data.type === 'follow' && data.fromUid) {
-        router.push({ pathname: '/u/[uid]' as any, params: { uid: data.fromUid } });
-      }
-    });
-
-    return () => subscription.remove();
-  }, []);
-
-  // Clear badge when app comes to foreground
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        Notifications.setBadgeCountAsync(0);
-      }
-    });
-
-    return () => subscription.remove();
-  }, []);
-
   useEffect(() => {
     if (!ready) return;
 
@@ -125,22 +83,44 @@ export default function RootLayout() {
     if (user && hasUsername === true && onUsername) router.replace("/");
   }, [ready, user, segments, hasUsername]);
 
-  if (!ready) return null;
+  // Show loading while fonts or auth state is loading
+  if (!fontsLoaded || !ready) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#ff3b30" />
+      </View>
+    );
+  }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" />
-      <Stack.Screen name="username" />
+    <View style={styles.container} onLayout={onLayoutRootView}>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="username" />
 
-      <Stack.Screen name="stanspace" />
-      <Stack.Screen name="stanhub" />
-      <Stack.Screen name="flappyclickin" />
+        <Stack.Screen name="stanspace" />
+        <Stack.Screen name="stanhub" />
+        <Stack.Screen name="flappyclickin" />
 
-      <Stack.Screen name="post" />
-      <Stack.Screen name="settings" />
-      <Stack.Screen name="messages" />
-      <Stack.Screen name="u/[uid]" />
-    </Stack>
+        <Stack.Screen name="post" />
+        <Stack.Screen name="settings" />
+        <Stack.Screen name="messages" />
+        <Stack.Screen name="u/[uid]" />
+      </Stack>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#0a0a0a",
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: "#0a0a0a",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+});

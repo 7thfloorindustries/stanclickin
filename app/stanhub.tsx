@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, Modal, Dimensions } from "react-native";
+import { View, Text, StyleSheet, FlatList, Pressable, Modal, Dimensions, Animated } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
@@ -10,6 +10,7 @@ import * as Haptics from "expo-haptics";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { auth, db } from "../src/lib/firebase";
 import { type ThemeId, getTheme } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 type MusicVideo = {
   id: string;
@@ -125,20 +126,20 @@ export default function StanHub() {
       <View style={styles.wrap}>
         <View style={styles.header}>
           <Pressable
-            style={[
-              styles.backBtn,
-              theme.stanPhoto && styles.backBtnWithBanner
-            ]}
-            onPress={() => router.back()}
+            style={[styles.backBtn, { backgroundColor: theme.surfaceColor }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.back();
+            }}
           >
-            <Text style={[styles.backText, theme.stanPhoto && styles.backTextWithBanner]}>‹ Back</Text>
+            <Text style={[styles.backText, { color: theme.textColor }]}>{"<"} BACK</Text>
           </Pressable>
         </View>
 
         <View style={styles.titleSection}>
-          <Text style={[styles.title, theme.stanPhoto && styles.titleWithBanner]}>STANHUB</Text>
-          <Text style={[styles.subtitle, theme.stanPhoto && styles.subtitleWithBanner]}>
-            Exclusive Music Videos
+          <Text style={[styles.title, { color: theme.primaryColor }]}>STANHUB</Text>
+          <Text style={[styles.subtitle, { color: theme.secondaryTextColor }]}>
+            EXCLUSIVE MUSIC VIDEOS
           </Text>
         </View>
 
@@ -150,52 +151,21 @@ export default function StanHub() {
           columnWrapperStyle={styles.row}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, theme.stanPhoto && styles.emptyTextWithBanner]}>
-                No videos yet. Check back soon! 🎵
+              <Text style={[styles.emptyText, { color: theme.mutedTextColor }]}>
+                NO VIDEOS YET
+              </Text>
+              <Text style={[styles.emptySubtext, { color: theme.mutedTextColor }]}>
+                CHECK BACK SOON
               </Text>
             </View>
           }
           renderItem={({ item }) => (
-            <Pressable
-              style={styles.videoCard}
+            <VideoCard
+              video={item}
+              theme={theme}
               onPress={() => openVideo(item)}
-            >
-              {theme.stanPhoto ? (
-                <BlurView intensity={80} tint="light" style={styles.cardBlur}>
-                  <Image
-                    source={{ uri: item.thumbnailUrl }}
-                    style={styles.thumbnail}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                  />
-                  <View style={styles.cardInfo}>
-                    <Text style={styles.videoTitle} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                  </View>
-                  <View style={styles.playOverlay}>
-                    <Text style={styles.playIcon}>▶</Text>
-                  </View>
-                </BlurView>
-              ) : (
-                <View style={styles.card}>
-                  <Image
-                    source={{ uri: item.thumbnailUrl }}
-                    style={styles.thumbnail}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                  />
-                  <View style={styles.cardInfo}>
-                    <Text style={styles.videoTitle} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                  </View>
-                  <View style={styles.playOverlay}>
-                    <Text style={styles.playIcon}>▶</Text>
-                  </View>
-                </View>
-              )}
-            </Pressable>
+              isNew={isNewVideo(item)}
+            />
           )}
         />
       </View>
@@ -218,14 +188,55 @@ export default function StanHub() {
                 contentFit="contain"
                 allowsPictureInPicture
               />
-              <Pressable style={styles.closeBtn} onPress={closeVideo}>
-                <Text style={styles.closeBtnText}>✕</Text>
+              <Pressable
+                style={[styles.closeBtn, { backgroundColor: theme.surfaceColor }]}
+                onPress={closeVideo}
+              >
+                <Text style={[styles.closeBtnText, { color: theme.textColor }]}>x</Text>
               </Pressable>
             </>
           )}
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
+
+// Video Card Component with press animation
+function VideoCard({ video, theme, onPress, isNew }: { video: MusicVideo; theme: any; onPress: () => void; isNew: boolean }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pressHandlers = createPressAnimation(scale);
+
+  return (
+    <Animated.View style={[styles.videoCard, { transform: [{ scale }] }]}>
+      <Pressable
+        style={[styles.card, { backgroundColor: theme.surfaceColor }]}
+        onPress={onPress}
+        {...pressHandlers}
+      >
+        <Image
+          source={{ uri: video.thumbnailUrl }}
+          style={styles.thumbnail}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+        />
+        <View style={[styles.cardInfo, { backgroundColor: theme.surfaceColor }]}>
+          <Text style={[styles.videoTitle, { color: theme.textColor }]} numberOfLines={2}>
+            {video.title.toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.playOverlay}>
+          <View style={[styles.playButton, { backgroundColor: theme.primaryColor, ...getGlowStyle(theme.primaryColor, 12) }]}>
+            <Text style={styles.playIcon}>{">"}</Text>
+          </View>
+        </View>
+        {isNew && (
+          <View style={[styles.newBadge, { backgroundColor: theme.primaryColor }]}>
+            <Text style={styles.newBadgeText}>NEW</Text>
+          </View>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -248,58 +259,38 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(10, 10, 10, 0.8)",
   },
 
-  header: { marginBottom: 12 },
+  header: { marginBottom: 16 },
   backBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#111",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
     alignSelf: "flex-start",
   },
-  backBtnWithBanner: {
-    borderColor: "rgba(255, 255, 255, 0.3)",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  backText: { fontWeight: "900", color: "#111" },
-  backTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  backText: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 1,
   },
 
   titleSection: {
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   title: {
-    fontSize: 32,
-    fontWeight: "900",
-    color: "#111",
-    marginBottom: 4,
+    fontSize: 28,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 4,
+    marginBottom: 8,
     textAlign: "center",
-  },
-  titleWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
   },
   subtitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#666",
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    letterSpacing: 2,
     textAlign: "center",
-  },
-  subtitleWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
   },
 
   grid: {
@@ -316,13 +307,6 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 12,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
-  },
-  cardBlur: {
-    borderRadius: 12,
-    overflow: "hidden",
   },
   thumbnail: {
     width: "100%",
@@ -332,41 +316,47 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   videoTitle: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
-    lineHeight: 18,
+    fontSize: 11,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 0.5,
+    lineHeight: 16,
   },
   playOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    bottom: 0,
+    height: cardWidth * 1.2,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+  },
+  playButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
   },
   playIcon: {
-    fontSize: 48,
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+    marginLeft: 4,
   },
   newBadge: {
     position: "absolute",
     top: 8,
-    right: 8,
-    backgroundColor: "#ff3b30",
+    left: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
   },
   newBadgeText: {
-    fontSize: 10,
-    fontWeight: "900",
+    fontSize: 9,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
+    letterSpacing: 1,
   },
 
   emptyState: {
@@ -374,17 +364,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingTop: 100,
+    gap: 8,
   },
   emptyText: {
-    fontSize: 16,
-    color: "#666",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
     textAlign: "center",
+    letterSpacing: 2,
   },
-  emptyTextWithBanner: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+  emptySubtext: {
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    textAlign: "center",
+    letterSpacing: 1,
   },
 
   videoModal: {
@@ -401,7 +393,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 50,
     right: 20,
-    backgroundColor: "#fff",
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -409,8 +400,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   closeBtnText: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
   },
 });

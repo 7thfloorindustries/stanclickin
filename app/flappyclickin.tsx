@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -13,12 +13,56 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, addDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { Audio } from "expo-av";
 import * as Haptics from "expo-haptics";
+import ReanimatedAnimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withSequence,
+  withRepeat,
+  withDelay,
+  runOnJS,
+  Easing as ReanimatedEasing,
+  interpolateColor,
+  cancelAnimation,
+} from "react-native-reanimated";
+import { Canvas, Circle, Group, BlurMask, vec, Path, Skia } from "@shopify/react-native-skia";
 import { auth, db } from "../src/lib/firebase";
 import { type ThemeId, getTheme } from "../src/lib/themes";
+import { getGlowStyle, reanimatedSpringConfigs } from "../src/lib/animations";
 import * as IAP from "react-native-iap";
+
+// Particle types
+type DustParticle = {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  opacity: number;
+  size: number;
+};
+
+type SparkParticle = {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  opacity: number;
+  size: number;
+  color: string;
+};
+
+type TrailPoint = {
+  x: number;
+  y: number;
+  opacity: number;
+};
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -106,10 +150,365 @@ export default function FlappyClickin() {
   const frameCount = useRef(0);
   const animationFrame = useRef<number>();
   const backgroundMusic = useRef<Audio.Sound | null>(null);
+  const musicStarted = useRef(false);
   const scoreRef = useRef(0); // Track score in game loop for difficulty calculations
   const invincibilityInterval = useRef<NodeJS.Timeout | null>(null);
   const isInvincibleRef = useRef(false); // Track invincibility for immediate access in collision detection
   const sessionDocIdRef = useRef<string | null>(null); // Track the leaderboard document ID for this session
+
+  // Reanimated animation values
+  const screenShakeX = useSharedValue(0);
+  const screenShakeY = useSharedValue(0);
+  const gameContainerScale = useSharedValue(1);
+  const gameContainerOpacity = useSharedValue(1);
+  const glowRadius = useSharedValue(10);
+  const glowOpacity = useSharedValue(0);
+  const glowHue = useSharedValue(120); // Start at green
+  const scorePopY = useSharedValue(0);
+  const scorePopOpacity = useSharedValue(0);
+  const scorePopScale = useSharedValue(1);
+  const [showScorePop, setShowScorePop] = useState(false);
+
+  // Skia particle state
+  const [dustParticles, setDustParticles] = useState<DustParticle[]>([]);
+  const [sparkParticles, setSparkParticles] = useState<SparkParticle[]>([]);
+  const [trailPoints, setTrailPoints] = useState<TrailPoint[]>([]);
+  const particleIdRef = useRef(0);
+  const trailUpdateRef = useRef(0);
+
+  // Near-miss zoom state
+  const nearMissScale = useSharedValue(1);
+  const isNearMiss = useRef(false);
+
+  // Achievement system
+  type Achievement = {
+    score: number;
+    title: string;
+    emoji: string;
+    color: string;
+  };
+
+  const ACHIEVEMENTS: Achievement[] = [
+    { score: 10, title: "BRONZE FLAPPER", emoji: "🥉", color: "#cd7f32" },
+    { score: 25, title: "SILVER FLAPPER", emoji: "🥈", color: "#c0c0c0" },
+    { score: 50, title: "GOLD FLAPPER", emoji: "🥇", color: "#ffd700" },
+    { score: 75, title: "PLATINUM FLAPPER", emoji: "💎", color: "#e5e4e2" },
+    { score: 100, title: "LEGENDARY", emoji: "👑", color: "#ff3b30" },
+  ];
+
+  const [currentAchievement, setCurrentAchievement] = useState<Achievement | null>(null);
+  const achievedScores = useRef<Set<number>>(new Set());
+
+  // Achievement animation values
+  const achievementScale = useSharedValue(0);
+  const achievementOpacity = useSharedValue(0);
+  const achievementY = useSharedValue(-100);
+  const achievementGlow = useSharedValue(0);
+
+  // Near-miss animated style
+  const nearMissStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: nearMissScale.value }],
+  }));
+
+  // Game container animated style (for shake and slow-mo zoom)
+  const gameContainerStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: screenShakeX.value },
+      { translateY: screenShakeY.value },
+      { scale: gameContainerScale.value },
+    ],
+    opacity: gameContainerOpacity.value,
+  }));
+
+  // Invincibility glow animated style
+  const invincibleGlowStyle = useAnimatedStyle(() => {
+    const color = interpolateColor(
+      glowHue.value,
+      [0, 60, 120, 180, 240, 300, 360],
+      ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000']
+    );
+    return {
+      shadowColor: color,
+      shadowRadius: glowRadius.value,
+      shadowOpacity: glowOpacity.value,
+      borderColor: color,
+    };
+  });
+
+  // Score pop-up animated style
+  const scorePopStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: scorePopY.value },
+      { scale: scorePopScale.value },
+    ],
+    opacity: scorePopOpacity.value,
+  }));
+
+  // Achievement animated style
+  const achievementStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: achievementY.value },
+      { scale: achievementScale.value },
+    ],
+    opacity: achievementOpacity.value,
+  }));
+
+  const achievementGlowStyle = useAnimatedStyle(() => ({
+    shadowOpacity: achievementGlow.value,
+    shadowRadius: 20 + achievementGlow.value * 15,
+  }));
+
+  // Trigger achievement popup
+  const triggerAchievement = useCallback((achievement: Achievement) => {
+    setCurrentAchievement(achievement);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Animate in
+    achievementY.value = -100;
+    achievementScale.value = 0;
+    achievementOpacity.value = 0;
+    achievementGlow.value = 0;
+
+    achievementY.value = withSpring(60, { damping: 12, stiffness: 150 });
+    achievementScale.value = withSequence(
+      withSpring(1.2, { damping: 8, stiffness: 200 }),
+      withSpring(1, { damping: 15, stiffness: 150 })
+    );
+    achievementOpacity.value = withTiming(1, { duration: 200 });
+
+    // Pulsing glow effect
+    achievementGlow.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 500 }),
+        withTiming(0.4, { duration: 500 })
+      ),
+      3,
+      true
+    );
+
+    // Animate out after 2.5 seconds
+    setTimeout(() => {
+      achievementY.value = withTiming(-100, { duration: 300 });
+      achievementOpacity.value = withTiming(0, { duration: 300 }, () => {
+        runOnJS(setCurrentAchievement)(null);
+      });
+    }, 2500);
+  }, []);
+
+  // Check for achievements
+  const checkAchievement = useCallback((newScore: number) => {
+    for (const achievement of ACHIEVEMENTS) {
+      if (newScore >= achievement.score && !achievedScores.current.has(achievement.score)) {
+        achievedScores.current.add(achievement.score);
+        triggerAchievement(achievement);
+        break; // Only show one at a time
+      }
+    }
+  }, [triggerAchievement]);
+
+  // Trigger screen shake
+  const triggerScreenShake = useCallback((intensity: number = 10) => {
+    const duration = 50;
+    screenShakeX.value = withSequence(
+      withTiming(-intensity, { duration }),
+      withTiming(intensity, { duration }),
+      withTiming(-intensity * 0.7, { duration }),
+      withTiming(intensity * 0.7, { duration }),
+      withTiming(-intensity * 0.4, { duration }),
+      withTiming(0, { duration })
+    );
+    screenShakeY.value = withSequence(
+      withTiming(intensity * 0.5, { duration }),
+      withTiming(-intensity * 0.5, { duration }),
+      withTiming(intensity * 0.3, { duration }),
+      withTiming(-intensity * 0.3, { duration }),
+      withTiming(0, { duration })
+    );
+  }, []);
+
+  // Trigger slow motion death effect
+  const triggerSlowMoDeath = useCallback((onComplete: () => void) => {
+    gameContainerScale.value = withTiming(1.15, { duration: 600, easing: ReanimatedEasing.out(ReanimatedEasing.ease) });
+    gameContainerOpacity.value = withTiming(0.5, { duration: 800, easing: ReanimatedEasing.in(ReanimatedEasing.ease) }, () => {
+      runOnJS(onComplete)();
+    });
+  }, []);
+
+  // Reset game visuals
+  const resetGameVisuals = useCallback(() => {
+    gameContainerScale.value = 1;
+    gameContainerOpacity.value = 1;
+    screenShakeX.value = 0;
+    screenShakeY.value = 0;
+  }, []);
+
+  // Start invincibility glow animation
+  const startInvincibilityGlow = useCallback(() => {
+    glowOpacity.value = withTiming(0.8, { duration: 200 });
+    // Pulsing radius
+    glowRadius.value = withRepeat(
+      withSequence(
+        withTiming(25, { duration: 400, easing: ReanimatedEasing.inOut(ReanimatedEasing.ease) }),
+        withTiming(10, { duration: 400, easing: ReanimatedEasing.inOut(ReanimatedEasing.ease) })
+      ),
+      -1,
+      true
+    );
+    // Rainbow color cycling
+    glowHue.value = 120; // Reset to green
+    glowHue.value = withRepeat(
+      withTiming(480, { duration: 2000, easing: ReanimatedEasing.linear }), // Go through colors twice
+      -1,
+      false
+    );
+  }, []);
+
+  // Stop invincibility glow animation
+  const stopInvincibilityGlow = useCallback(() => {
+    glowOpacity.value = withTiming(0, { duration: 300 });
+    cancelAnimation(glowRadius);
+    cancelAnimation(glowHue);
+    glowRadius.value = 10;
+    glowHue.value = 120;
+  }, []);
+
+  // Trigger score pop animation
+  const triggerScorePop = useCallback(() => {
+    setShowScorePop(true);
+    scorePopY.value = 0;
+    scorePopOpacity.value = 1;
+    scorePopScale.value = 1.5;
+
+    scorePopY.value = withTiming(-50, { duration: 600, easing: ReanimatedEasing.out(ReanimatedEasing.cubic) });
+    scorePopScale.value = withTiming(1, { duration: 200 });
+    scorePopOpacity.value = withDelay(300, withTiming(0, { duration: 300 }, () => {
+      runOnJS(setShowScorePop)(false);
+    }));
+  }, []);
+
+  // Spawn dust particles on jump
+  const spawnDustParticles = useCallback((birdYPosition: number) => {
+    const newParticles: DustParticle[] = [];
+    const birdCenterX = SCREEN_WIDTH / 2;
+    const birdBottom = birdYPosition + BIRD_SIZE;
+
+    for (let i = 0; i < 5; i++) {
+      particleIdRef.current++;
+      const angle = -60 + Math.random() * 120; // -60 to 60 degrees (downward fan)
+      const speed = 2 + Math.random() * 3;
+      const radians = ((angle + 90) * Math.PI) / 180;
+
+      newParticles.push({
+        id: particleIdRef.current,
+        x: birdCenterX + (Math.random() - 0.5) * 20,
+        y: birdBottom,
+        vx: Math.cos(radians) * speed,
+        vy: Math.sin(radians) * speed + 2, // Bias downward
+        opacity: 0.8,
+        size: 4 + Math.random() * 4,
+      });
+    }
+
+    setDustParticles(prev => [...prev, ...newParticles]);
+  }, []);
+
+  // Spawn spark particles on collision
+  const spawnSparkParticles = useCallback((birdYPosition: number) => {
+    const newParticles: SparkParticle[] = [];
+    const birdCenterX = SCREEN_WIDTH / 2;
+    const birdCenterY = birdYPosition + BIRD_SIZE / 2;
+    const sparkColors = ['#ff3b30', '#ff9500', '#ffcc00', '#ff6b6b', '#ffffff'];
+
+    for (let i = 0; i < 12; i++) {
+      particleIdRef.current++;
+      const angle = (i / 12) * 360 + Math.random() * 30;
+      const speed = 5 + Math.random() * 8;
+      const radians = (angle * Math.PI) / 180;
+
+      newParticles.push({
+        id: particleIdRef.current,
+        x: birdCenterX,
+        y: birdCenterY,
+        vx: Math.cos(radians) * speed,
+        vy: Math.sin(radians) * speed,
+        opacity: 1,
+        size: 3 + Math.random() * 5,
+        color: sparkColors[Math.floor(Math.random() * sparkColors.length)],
+      });
+    }
+
+    setSparkParticles(prev => [...prev, ...newParticles]);
+  }, []);
+
+  // Update trail points
+  const updateTrail = useCallback((birdYPosition: number) => {
+    trailUpdateRef.current++;
+    if (trailUpdateRef.current % 2 !== 0) return; // Update every other frame
+
+    const birdCenterX = SCREEN_WIDTH / 2;
+    const birdCenterY = birdYPosition + BIRD_SIZE / 2;
+
+    setTrailPoints(prev => {
+      const newPoints = [
+        { x: birdCenterX - 15, y: birdCenterY, opacity: 0.6 },
+        ...prev.map(p => ({ ...p, opacity: p.opacity * 0.85 })),
+      ].filter(p => p.opacity > 0.05).slice(0, 8);
+      return newPoints;
+    });
+  }, []);
+
+  // Update particles each frame
+  const updateParticles = useCallback(() => {
+    // Update dust particles
+    setDustParticles(prev =>
+      prev
+        .map(p => ({
+          ...p,
+          x: p.x + p.vx,
+          y: p.y + p.vy,
+          vy: p.vy + 0.15, // Gravity
+          opacity: p.opacity - 0.025,
+          size: p.size * 0.97,
+        }))
+        .filter(p => p.opacity > 0)
+    );
+
+    // Update spark particles
+    setSparkParticles(prev =>
+      prev
+        .map(p => ({
+          ...p,
+          x: p.x + p.vx,
+          y: p.y + p.vy,
+          vx: p.vx * 0.96, // Friction
+          vy: p.vy * 0.96 + 0.1, // Friction + light gravity
+          opacity: p.opacity - 0.03,
+          size: p.size * 0.95,
+        }))
+        .filter(p => p.opacity > 0)
+    );
+  }, []);
+
+  // Clear all particles
+  const clearParticles = useCallback(() => {
+    setDustParticles([]);
+    setSparkParticles([]);
+    setTrailPoints([]);
+  }, []);
+
+  // Trigger near-miss zoom effect
+  const triggerNearMiss = useCallback(() => {
+    if (!isNearMiss.current) {
+      isNearMiss.current = true;
+      nearMissScale.value = withSequence(
+        withTiming(1.03, { duration: 100 }),
+        withSpring(1, { damping: 15, stiffness: 150 })
+      );
+      setTimeout(() => {
+        isNearMiss.current = false;
+      }, 300);
+    }
+  }, []);
 
   // Load and play background music
   useEffect(() => {
@@ -129,7 +528,13 @@ export default function FlappyClickin() {
         );
 
         backgroundMusic.current = sound;
-        await sound.playAsync();
+        try {
+          await sound.playAsync();
+          musicStarted.current = true;
+        } catch (playError) {
+          // Web browsers block autoplay - music will start on first tap
+          console.log("Autoplay blocked, waiting for user interaction");
+        }
       } catch (error) {
         console.error("Error loading background music:", error);
       }
@@ -141,6 +546,33 @@ export default function FlappyClickin() {
       backgroundMusic.current?.unloadAsync();
     };
   }, []);
+
+  // Pause/resume music based on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      // Only resume if music was already started (avoids web autoplay issues)
+      if (musicStarted.current) {
+        backgroundMusic.current?.playAsync();
+      }
+
+      return () => {
+        // Pause when screen loses focus
+        backgroundMusic.current?.pauseAsync();
+      };
+    }, [])
+  );
+
+  // Start music on first tap (for web autoplay policy)
+  const startMusicIfNeeded = async () => {
+    if (backgroundMusic.current && !musicStarted.current) {
+      try {
+        await backgroundMusic.current.playAsync();
+        musicStarted.current = true;
+      } catch (e) {
+        // Still blocked
+      }
+    }
+  };
 
   // Initialize IAP connection and set up listeners
   // CRITICAL: Listeners MUST be set up BEFORE any purchase can be initiated
@@ -308,11 +740,16 @@ export default function FlappyClickin() {
     setIsInvincible(false);
     isInvincibleRef.current = false; // Reset invincibility
     sessionDocIdRef.current = null; // Reset session document ID for new game
+    clearParticles(); // Clear any leftover particles
+    achievedScores.current.clear(); // Reset achievements for new game
     setGameState("playing");
   };
 
   // Jump
   const jump = () => {
+    // Start music on first tap (web autoplay policy)
+    startMusicIfNeeded();
+
     if (gameState === "ready") {
       startGame();
       return;
@@ -322,6 +759,10 @@ export default function FlappyClickin() {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     birdVelocity.current = JUMP_VELOCITY;
+
+    // Spawn dust particles on jump
+    const currentBirdY = (birdY as any)._value;
+    spawnDustParticles(currentBirdY);
 
     // Animate bird rotation
     Animated.sequence([
@@ -386,6 +827,12 @@ export default function FlappyClickin() {
         setVisiblePipes([...pipes.current]);
       }
 
+      // Update trail effect
+      updateTrail(currentY);
+
+      // Update particles
+      updateParticles();
+
       // Check scoring
       pipes.current.forEach((pipe) => {
         if (!pipe.scored && pipe.x + PIPE_WIDTH < SCREEN_WIDTH / 2 - BIRD_SIZE / 2) {
@@ -393,9 +840,12 @@ export default function FlappyClickin() {
           setScore((s) => {
             const newScore = s + 1;
             scoreRef.current = newScore; // Sync ref for difficulty calculations
+            checkAchievement(newScore); // Check for achievement milestones
             return newScore;
           });
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          // Trigger score pop animation
+          triggerScorePop();
         }
       });
 
@@ -414,7 +864,7 @@ export default function FlappyClickin() {
           return;
         }
 
-        // Pipe collision
+        // Pipe collision and near-miss detection
         for (const pipe of pipes.current) {
           const pipeLeft = pipe.x;
           const pipeRight = pipe.x + PIPE_WIDTH;
@@ -425,6 +875,14 @@ export default function FlappyClickin() {
             if (birdTop < pipe.topHeight || birdBottom > pipe.topHeight + pipe.gap) {
               endGame();
               return;
+            }
+
+            // Near-miss detection (within 15px of pipe edge)
+            const distanceFromTop = birdTop - pipe.topHeight;
+            const distanceFromBottom = (pipe.topHeight + pipe.gap) - birdBottom;
+
+            if (distanceFromTop < 15 || distanceFromBottom < 15) {
+              triggerNearMiss();
             }
           }
         }
@@ -450,15 +908,23 @@ export default function FlappyClickin() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
+    // Trigger screen shake effect
+    triggerScreenShake(15);
+
+    // Spawn collision spark particles
+    const currentBirdY = (birdY as any)._value;
+    spawnSparkParticles(currentBirdY);
+
     // Clear invincibility timer if it exists
     if (invincibilityInterval.current) {
       clearInterval(invincibilityInterval.current);
       invincibilityInterval.current = null;
     }
 
-    // Consume life and go to game over
-    setLives(0); // You lose your life when you die
-    setGameState("gameOver");
+    // Stop the game loop immediately to pause the bird
+    if (animationFrame.current) {
+      cancelAnimationFrame(animationFrame.current);
+    }
 
     // Use scoreRef.current (synchronous) instead of score state (async)
     const finalScore = scoreRef.current;
@@ -470,27 +936,37 @@ export default function FlappyClickin() {
     // Update state to match ref
     setScore(finalScore);
 
-    // Save score immediately (replace old entry if bought life)
-    if (finalScore > 0) {
-      console.log("🎮 Saving score:", finalScore);
+    // Trigger slow-motion death effect, then show game over
+    triggerSlowMoDeath(() => {
+      // Consume life and go to game over
+      setLives(0);
+      setGameState("gameOver");
 
-      // If we already saved a score this session, delete it first
-      if (sessionDocIdRef.current) {
-        console.log("🎮 Deleting old session entry (bought life and improved/died again)");
-        deleteOldSessionScore(sessionDocIdRef.current);
+      // Reset visual effects for next game
+      resetGameVisuals();
+
+      // Save score immediately (replace old entry if bought life)
+      if (finalScore > 0) {
+        console.log("🎮 Saving score:", finalScore);
+
+        // If we already saved a score this session, delete it first
+        if (sessionDocIdRef.current) {
+          console.log("🎮 Deleting old session entry (bought life and improved/died again)");
+          deleteOldSessionScore(sessionDocIdRef.current);
+        }
+
+        // Save the new score and track the document ID
+        saveToLeaderboard(finalScore);
+
+        // Update personal best if this is a new high score
+        if (finalScore > highScore) {
+          console.log("🎮 NEW PERSONAL BEST!", finalScore);
+          setHighScore(finalScore);
+        }
+      } else {
+        console.log("🎮 Score is 0, not saving");
       }
-
-      // Save the new score and track the document ID
-      saveToLeaderboard(finalScore);
-
-      // Update personal best if this is a new high score
-      if (finalScore > highScore) {
-        console.log("🎮 NEW PERSONAL BEST!", finalScore);
-        setHighScore(finalScore);
-      }
-    } else {
-      console.log("🎮 Score is 0, not saving");
-    }
+    });
   };
 
   // Delete old session score from leaderboard
@@ -550,6 +1026,9 @@ export default function FlappyClickin() {
     isInvincibleRef.current = true;
     setInvincibilityTimeLeft(3);
 
+    // Start invincibility glow animation
+    startInvincibilityGlow();
+
     // Clear any existing invincibility timer
     if (invincibilityInterval.current) {
       clearInterval(invincibilityInterval.current);
@@ -565,6 +1044,9 @@ export default function FlappyClickin() {
     setVisiblePipes([...pipes.current]);
     frameCount.current = 0;
 
+    // Reset any death effects
+    resetGameVisuals();
+
     // Resume game (keep score!)
     setGameState("playing");
 
@@ -574,6 +1056,8 @@ export default function FlappyClickin() {
         if (prev <= 1) {
           setIsInvincible(false);
           isInvincibleRef.current = false;
+          // Stop invincibility glow animation
+          stopInvincibilityGlow();
           if (invincibilityInterval.current) {
             clearInterval(invincibilityInterval.current);
             invincibilityInterval.current = null;
@@ -644,13 +1128,14 @@ ${top5}
         </>
       )}
 
-      <Pressable
-        style={styles.gameArea}
-        onPress={jump}
-        pointerEvents={gameState === "gameOver" ? "none" : "auto"}
-      >
-        {/* Sky background */}
-        <View style={[styles.sky, { backgroundColor: theme.stanPhoto ? "transparent" : theme.backgroundColor }]} />
+      <ReanimatedAnimated.View style={[styles.gameAreaWrapper, gameContainerStyle, nearMissStyle]}>
+        <Pressable
+          style={styles.gameArea}
+          onPress={jump}
+          pointerEvents={gameState === "gameOver" ? "none" : "auto"}
+        >
+          {/* Sky background */}
+          <View style={[styles.sky, { backgroundColor: theme.stanPhoto ? "transparent" : theme.backgroundColor }]} />
 
         {/* Atlanta Buildings */}
         {visiblePipes.map((pipe) => (
@@ -728,7 +1213,7 @@ ${top5}
             contentFit="contain"
           />
           {isInvincible && (
-            <View style={styles.invincibleGlow} />
+            <ReanimatedAnimated.View style={[styles.invincibleGlow, invincibleGlowStyle]} />
           )}
         </Animated.View>
 
@@ -740,6 +1225,12 @@ ${top5}
           <>
             <View style={styles.scoreContainer}>
               <Text style={[styles.score, { color: theme.textColor }]}>{score}</Text>
+              {/* Score pop-up animation */}
+              {showScorePop && (
+                <ReanimatedAnimated.View style={[styles.scorePop, scorePopStyle]}>
+                  <Text style={[styles.scorePopText, { color: theme.primaryColor }]}>+1</Text>
+                </ReanimatedAnimated.View>
+              )}
             </View>
             <View style={styles.livesContainer}>
               <Text style={[styles.livesText, { color: theme.textColor }]}>
@@ -756,7 +1247,90 @@ ${top5}
           </>
         )}
 
-      </Pressable>
+        {/* Achievement Popup */}
+        {currentAchievement && (
+          <ReanimatedAnimated.View
+            style={[
+              styles.achievementContainer,
+              achievementStyle,
+              achievementGlowStyle,
+              { shadowColor: currentAchievement.color },
+            ]}
+          >
+            <View style={[styles.achievementBadge, { backgroundColor: currentAchievement.color }]}>
+              <Text style={styles.achievementEmoji}>{currentAchievement.emoji}</Text>
+            </View>
+            <View style={styles.achievementTextContainer}>
+              <Text style={styles.achievementUnlocked}>ACHIEVEMENT UNLOCKED</Text>
+              <Text style={[styles.achievementTitle, { color: currentAchievement.color }]}>
+                {currentAchievement.title}
+              </Text>
+              <Text style={styles.achievementScore}>Score {currentAchievement.score}+</Text>
+            </View>
+          </ReanimatedAnimated.View>
+        )}
+
+        {/* Skia Particle Canvas - Native only (Skia requires CanvasKit setup for web) */}
+        {Platform.OS !== 'web' && (dustParticles.length > 0 || sparkParticles.length > 0 || trailPoints.length > 0) && (
+          <Canvas style={styles.particleCanvas} pointerEvents="none">
+            {/* Trail effect */}
+            {trailPoints.map((point, index) => (
+              <Group key={`trail-${index}`}>
+                <Circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={8 - index * 0.8}
+                  color={`rgba(255, 255, 255, ${point.opacity * 0.5})`}
+                >
+                  <BlurMask blur={4} style="normal" />
+                </Circle>
+              </Group>
+            ))}
+
+            {/* Dust particles */}
+            {dustParticles.map((particle) => (
+              <Group key={`dust-${particle.id}`}>
+                <Circle
+                  cx={particle.x}
+                  cy={particle.y}
+                  r={particle.size}
+                  color={`rgba(180, 160, 140, ${particle.opacity})`}
+                />
+                <Circle
+                  cx={particle.x}
+                  cy={particle.y}
+                  r={particle.size * 0.6}
+                  color={`rgba(220, 200, 180, ${particle.opacity * 0.8})`}
+                />
+              </Group>
+            ))}
+
+            {/* Spark particles */}
+            {sparkParticles.map((particle) => (
+              <Group key={`spark-${particle.id}`}>
+                <Circle
+                  cx={particle.x}
+                  cy={particle.y}
+                  r={particle.size}
+                  color={particle.color}
+                  opacity={particle.opacity}
+                >
+                  <BlurMask blur={3} style="solid" />
+                </Circle>
+                <Circle
+                  cx={particle.x}
+                  cy={particle.y}
+                  r={particle.size * 0.5}
+                  color="#ffffff"
+                  opacity={particle.opacity * 0.9}
+                />
+              </Group>
+            ))}
+          </Canvas>
+        )}
+
+        </Pressable>
+      </ReanimatedAnimated.View>
 
       {/* Ready screen */}
       {gameState === "ready" && (
@@ -908,11 +1482,36 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "rgba(10, 10, 10, 0.6)",
+  },
+  gameAreaWrapper: {
+    flex: 1,
   },
   gameArea: {
     flex: 1,
     position: "relative",
+  },
+  particleCanvas: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 100,
+  },
+  scorePop: {
+    position: "absolute",
+    top: -30,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  scorePopText: {
+    fontSize: 36,
+    fontFamily: "SpaceMono-Bold",
+    textShadowColor: "rgba(0, 0, 0, 0.8)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
   sky: {
     ...StyleSheet.absoluteFillObject,
@@ -925,7 +1524,7 @@ const styles = StyleSheet.create({
     height: BIRD_SIZE,
   },
   characterInvincible: {
-    shadowColor: "#FFD700",
+    shadowColor: "#00ff88",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 20,
@@ -941,14 +1540,14 @@ const styles = StyleSheet.create({
     right: -10,
     bottom: -10,
     borderRadius: (BIRD_SIZE + 20) / 2,
-    backgroundColor: "rgba(255, 215, 0, 0.3)",
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
     borderWidth: 3,
-    borderColor: "#FFD700",
+    // borderColor and shadow* are animated via invincibleGlowStyle
+    shadowOffset: { width: 0, height: 0 },
   },
   building: {
     position: "absolute",
     width: PIPE_WIDTH,
-    borderWidth: 3,
   },
   windowsContainer: {
     flex: 1,
@@ -971,7 +1570,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: GROUND_HEIGHT,
-    borderTopWidth: 3,
   },
   scoreContainer: {
     position: "absolute",
@@ -980,10 +1578,10 @@ const styles = StyleSheet.create({
   },
   score: {
     fontSize: 72,
-    fontWeight: "900",
-    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    fontFamily: "SpaceMono-Bold",
+    textShadowColor: "rgba(0, 0, 0, 0.8)",
     textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 8,
+    textShadowRadius: 12,
   },
   livesContainer: {
     position: "absolute",
@@ -991,8 +1589,8 @@ const styles = StyleSheet.create({
     right: 20,
   },
   livesText: {
-    fontSize: 24,
-    fontWeight: "900",
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
     textShadowColor: "rgba(0, 0, 0, 0.5)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
@@ -1001,21 +1599,66 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 140,
     alignSelf: "center",
-    backgroundColor: "#FFD700",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 3,
-    borderColor: "#111",
+    backgroundColor: "#00ff88",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
   invincibilityText: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 13,
+    fontFamily: "SpaceMono-Bold",
+    color: "#0a0a0a",
+    letterSpacing: 2,
+  },
+  achievementContainer: {
+    position: "absolute",
+    top: 0,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1a1a1a",
+    borderRadius: 16,
+    padding: 16,
+    gap: 16,
+    shadowOffset: { width: 0, height: 0 },
+    borderWidth: 2,
+    borderColor: "#2a2a2a",
+  },
+  achievementBadge: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  achievementEmoji: {
+    fontSize: 32,
+  },
+  achievementTextContainer: {
+    flex: 1,
+  },
+  achievementUnlocked: {
+    fontSize: 10,
+    fontFamily: "SpaceMono",
+    color: "#888",
+    letterSpacing: 2,
+  },
+  achievementTitle: {
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  achievementScore: {
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    color: "#666",
+    marginTop: 2,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    backgroundColor: "rgba(10, 10, 10, 0.95)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,
@@ -1029,124 +1672,125 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   title: {
-    fontSize: 48,
-    fontWeight: "900",
+    fontSize: 36,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
-    textShadowColor: "#111",
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 0,
+    letterSpacing: 2,
+    textShadowColor: "#ff3b30",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
   },
   subtitle: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#fff",
+    fontSize: 16,
+    fontFamily: "SpaceMono",
+    color: "#888",
+    letterSpacing: 2,
   },
   highScore: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#FFD700",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
+    letterSpacing: 1,
   },
   gameOverTitle: {
-    fontSize: 48,
-    fontWeight: "900",
-    color: "#FF6B6B",
-    textShadowColor: "#111",
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 0,
+    fontSize: 32,
+    fontFamily: "SpaceMono-Bold",
+    color: "#ff3b30",
+    letterSpacing: 2,
   },
   finalScore: {
-    fontSize: 32,
-    fontWeight: "700",
+    fontSize: 28,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
+    letterSpacing: 1,
   },
   newHighScore: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#FFD700",
-    textShadowColor: "#111",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 0,
+    fontSize: 16,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
+    letterSpacing: 2,
   },
   verificationSeal: {
     marginTop: 20,
-    backgroundColor: "rgba(0, 200, 100, 0.15)",
-    borderWidth: 2,
-    borderColor: "#00C864",
+    backgroundColor: "rgba(0, 255, 136, 0.1)",
     borderRadius: 12,
-    padding: 12,
+    padding: 16,
     alignItems: "center",
     gap: 4,
   },
   verificationIcon: {
-    fontSize: 32,
-    fontWeight: "900",
-    color: "#00C864",
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
   },
   verificationText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#00C864",
+    fontSize: 12,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
     letterSpacing: 2,
   },
   verificationSubtext: {
     fontSize: 10,
-    fontWeight: "700",
-    color: "#666",
+    fontFamily: "SpaceMono",
+    color: "#555",
   },
   leaderboardContainer: {
     marginTop: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    backgroundColor: "#141414",
     borderRadius: 12,
     padding: 16,
     width: "90%",
     maxWidth: 350,
   },
   leaderboardTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
     textAlign: "center",
-    marginBottom: 12,
+    marginBottom: 16,
+    letterSpacing: 2,
   },
   leaderboardRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 8,
     marginBottom: 4,
+    backgroundColor: "#1a1a1a",
   },
   leaderboardRowHighlight: {
-    backgroundColor: "#FFD700",
+    backgroundColor: "rgba(0, 255, 136, 0.2)",
   },
   leaderboardRank: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 12,
+    fontFamily: "SpaceMono-Bold",
+    color: "#888",
     width: 40,
   },
   leaderboardName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111",
+    fontSize: 13,
+    fontFamily: "SpaceMono",
+    color: "#fff",
     flex: 1,
   },
   leaderboardScore: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
   },
   leaderboardExpandHint: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#666",
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    color: "#555",
     textAlign: "center",
-    marginTop: 8,
+    marginTop: 12,
+    letterSpacing: 0.5,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "#0a0a0a",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1154,27 +1798,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
+    backgroundColor: "#141414",
   },
   modalTitle: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
+    letterSpacing: 2,
   },
   modalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#f0f0f0",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#1a1a1a",
     justifyContent: "center",
     alignItems: "center",
   },
   modalCloseBtnText: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111",
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
   },
   modalContent: {
     flex: 1,
@@ -1190,42 +1833,32 @@ const styles = StyleSheet.create({
     paddingTop: 100,
   },
   emptyLeaderboardText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#999",
+    fontSize: 14,
+    fontFamily: "SpaceMono",
+    color: "#555",
     textAlign: "center",
+    letterSpacing: 1,
   },
   fullLeaderboardRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 16,
     paddingHorizontal: 16,
-    backgroundColor: "#fff",
+    backgroundColor: "#141414",
     borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#e0e0e0",
     gap: 12,
   },
   fullLeaderboardRowHighlight: {
-    backgroundColor: "#FFF9E6",
-    borderColor: "#FFD700",
-    borderWidth: 3,
+    backgroundColor: "rgba(0, 255, 136, 0.15)",
   },
   firstPlace: {
-    borderColor: "#FFD700",
-    borderWidth: 3,
-    shadowColor: "#FFD700",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    backgroundColor: "rgba(255, 215, 0, 0.1)",
   },
   secondPlace: {
-    borderColor: "#C0C0C0",
-    borderWidth: 3,
+    backgroundColor: "rgba(192, 192, 192, 0.1)",
   },
   thirdPlace: {
-    borderColor: "#CD7F32",
-    borderWidth: 3,
+    backgroundColor: "rgba(205, 127, 50, 0.1)",
   },
   rankBadge: {
     width: 50,
@@ -1233,87 +1866,84 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   fullLeaderboardRank: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#888",
   },
   topThreeRank: {
-    fontSize: 28,
+    fontSize: 24,
   },
   fullLeaderboardName: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono",
+    color: "#fff",
   },
   fullLeaderboardScore: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    color: "#00ff88",
   },
   postBtn: {
     marginTop: 16,
-    backgroundColor: "#00d95f",
+    backgroundColor: "#00ff88",
     paddingHorizontal: 32,
     paddingVertical: 16,
-    borderRadius: 999,
-    borderWidth: 3,
-    borderColor: "#111",
+    borderRadius: 8,
   },
   postBtnText: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#fff",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#0a0a0a",
     textAlign: "center",
+    letterSpacing: 1,
   },
   continueBtn: {
     marginTop: 16,
-    backgroundColor: "#00d95f",
+    backgroundColor: "#00ff88",
     paddingHorizontal: 32,
     paddingVertical: 16,
-    borderRadius: 999,
-    borderWidth: 3,
-    borderColor: "#111",
+    borderRadius: 8,
   },
   continueBtnText: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#fff",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#0a0a0a",
     textAlign: "center",
+    letterSpacing: 1,
   },
   purchaseBtn: {
     marginTop: 16,
-    backgroundColor: "#FFD700",
+    backgroundColor: "#00d4ff",
     paddingHorizontal: 32,
     paddingVertical: 16,
-    borderRadius: 999,
-    borderWidth: 3,
-    borderColor: "#111",
+    borderRadius: 8,
     alignItems: "center",
   },
   purchaseBtnText: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#0a0a0a",
+    letterSpacing: 1,
   },
   purchaseSubtext: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111",
+    fontSize: 10,
+    fontFamily: "SpaceMono",
+    color: "#0a0a0a",
     marginTop: 4,
+    letterSpacing: 0.5,
   },
   playAgainBtn: {
     marginTop: 12,
-    backgroundColor: "#fff",
+    backgroundColor: "#141414",
     paddingHorizontal: 32,
     paddingVertical: 16,
-    borderRadius: 999,
-    borderWidth: 3,
-    borderColor: "#111",
+    borderRadius: 8,
   },
   playAgainText: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111",
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#fff",
+    letterSpacing: 1,
   },
 });

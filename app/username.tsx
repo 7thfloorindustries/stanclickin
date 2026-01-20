@@ -1,23 +1,44 @@
-import React, { useMemo, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Alert } from "react-native";
-import { doc, getDoc, setDoc, collection, query, where, getDocs, runTransaction } from "firebase/firestore";
+import React, { useMemo, useState, useRef } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, Animated } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { doc, setDoc, collection, query, where, getDocs, runTransaction } from "firebase/firestore";
+import * as Haptics from "expo-haptics";
 import { auth, db } from "../src/lib/firebase";
 import { router } from "expo-router";
+import { getTheme } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 const okUsername = (u: string) => /^[a-z0-9_]{3,15}$/.test(u);
 
 export default function Username() {
   const [username, setUsername] = useState("");
+  const [inputFocused, setInputFocused] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const cleaned = useMemo(() => username.trim().toLowerCase(), [username]);
   const valid = useMemo(() => okUsername(cleaned), [cleaned]);
 
+  // Use default theme for onboarding
+  const theme = getTheme(null);
+
+  // Animation values
+  const saveScale = useRef(new Animated.Value(1)).current;
+  const savePressHandlers = createPressAnimation(saveScale);
+
   const save = async () => {
     const user = auth.currentUser;
-    if (!user) return Alert.alert("Not logged in");
+    if (!user) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return Alert.alert("Not logged in");
+    }
 
     if (!valid) {
-      return Alert.alert("Invalid username", "Use 3–15 chars: a–z, 0–9, underscore.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return Alert.alert("Invalid username", "Use 3-15 chars: a-z, 0-9, underscore.");
     }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSaving(true);
 
     try {
       // Use transaction to atomically check and claim username
@@ -38,10 +59,13 @@ export default function Username() {
         }, { merge: true });
       });
     } catch (error: any) {
+      setSaving(false);
       if (error.message === "USERNAME_TAKEN") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         return Alert.alert("Taken", "That username is already taken.");
       }
       console.error("Error saving username:", error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return Alert.alert("Error", "Failed to save username. Please try again.");
     }
 
@@ -70,38 +94,131 @@ export default function Username() {
       // Don't block signup if auto-follow fails
     }
 
-    router.replace("/"); // ✅ go to launcher (NOT /(tabs))
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    router.replace("/");
   };
 
+  const charCount = cleaned.length;
+  const minChars = 3;
+  const maxChars = 15;
+
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.h1}>Pick a username</Text>
-      <Text style={styles.sub}>This shows as @username.</Text>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]}>
+      <View style={styles.wrap}>
+        <Text style={[styles.h1, { color: theme.textColor }]}>Pick a username</Text>
+        <Text style={[styles.sub, { color: theme.secondaryTextColor }]}>
+          This shows as @username.
+        </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. bigtonytone"
-        autoCapitalize="none"
-        value={username}
-        onChangeText={setUsername}
-      />
+        <TextInput
+          style={[
+            styles.input,
+            { backgroundColor: theme.surfaceColor, color: theme.textColor },
+            inputFocused && {
+              ...getGlowStyle(theme.primaryColor, 6),
+            },
+          ]}
+          placeholder="e.g. bigtonytone"
+          placeholderTextColor={theme.mutedTextColor}
+          autoCapitalize="none"
+          value={username}
+          onChangeText={setUsername}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
+          editable={!saving}
+          maxLength={maxChars}
+        />
 
-      <Pressable style={[styles.btn, !valid && styles.btnDisabled]} onPress={save} disabled={!valid}>
-        <Text style={styles.btnText}>Save</Text>
-      </Pressable>
+        <Text
+          style={[
+            styles.charCounter,
+            { color: theme.mutedTextColor },
+            charCount >= minChars && charCount <= maxChars && { color: theme.primaryColor },
+            charCount > 0 && charCount < minChars && { color: theme.accentColor },
+          ]}
+        >
+          {charCount}/{maxChars}
+        </Text>
 
-      <Text style={styles.hint}>Allowed: a–z, 0–9, underscore. 3–15 chars.</Text>
-    </View>
+        <Animated.View style={{ transform: [{ scale: saveScale }] }}>
+          <Pressable
+            style={[
+              styles.btn,
+              {
+                backgroundColor: theme.primaryColor,
+                ...getGlowStyle(theme.primaryColor, valid ? 10 : 0),
+              },
+              (!valid || saving) && styles.btnDisabled,
+            ]}
+            onPress={save}
+            disabled={!valid || saving}
+            {...savePressHandlers}
+          >
+            <Text style={[styles.btnText, { color: theme.backgroundColor }]}>
+              {saving ? "Saving..." : "Save"}
+            </Text>
+          </Pressable>
+        </Animated.View>
+
+        <Text style={[styles.hint, { color: theme.mutedTextColor }]}>
+          Allowed: a-z, 0-9, underscore. 3-15 chars.
+        </Text>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 24, justifyContent: "center", gap: 12, backgroundColor: "#fff" },
-  h1: { fontSize: 28, fontWeight: "900", color: "#111" },
-  sub: { color: "#444", marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 14 },
-  btn: { padding: 14, borderRadius: 12, backgroundColor: "#111", alignItems: "center" },
-  btnDisabled: { opacity: 0.35 },
-  btnText: { color: "#fff", fontWeight: "900" },
-  hint: { marginTop: 8, opacity: 0.6 },
+  safe: { flex: 1 },
+  wrap: {
+    flex: 1,
+    padding: 24,
+    justifyContent: "center",
+    gap: 14,
+  },
+  h1: {
+    fontSize: 28,
+    fontWeight: "900",
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
+  sub: {
+    marginBottom: 8,
+    fontFamily: "SpaceMono",
+    fontSize: 14,
+  },
+  input: {
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    fontFamily: "SpaceMono",
+  },
+  charCounter: {
+    fontSize: 12,
+    textAlign: "right",
+    fontFamily: "SpaceMono",
+    fontWeight: "600",
+    marginTop: -6,
+    marginBottom: 4,
+  },
+  btn: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  btnDisabled: {
+    opacity: 0.35,
+  },
+  btnText: {
+    fontWeight: "700",
+    fontSize: 16,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
+  hint: {
+    marginTop: 8,
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    textAlign: "center",
+  },
 });

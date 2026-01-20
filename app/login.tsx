@@ -1,9 +1,12 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, Platform } from "react-native";
+import React, { useState, useRef } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
+import * as Haptics from "expo-haptics";
 import { auth } from "../src/lib/firebase";
+import { getTheme, getGlowShadow } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 export default function Login() {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -11,14 +14,32 @@ export default function Login() {
   const [pw, setPw] = useState("");
   const [loading, setLoading] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [pwFocused, setPwFocused] = useState(false);
+
+  // Use default theme (neon) for login screen
+  const theme = getTheme(null);
+
+  // Animation values
+  const submitScale = useRef(new Animated.Value(1)).current;
+  const checkboxScale = useRef(new Animated.Value(1)).current;
+  const loginTabScale = useRef(new Animated.Value(1)).current;
+  const signupTabScale = useRef(new Animated.Value(1)).current;
+
+  const submitPressHandlers = createPressAnimation(submitScale);
+  const checkboxPressHandlers = createPressAnimation(checkboxScale);
+  const loginTabPressHandlers = createPressAnimation(loginTabScale);
+  const signupTabPressHandlers = createPressAnimation(signupTabScale);
 
   const signUp = async () => {
     if (!email.trim() || !pw) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Error", "Please enter email and password");
       return;
     }
 
     if (!tosAccepted) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert("Terms Required", "Please accept the Terms of Service to continue");
       return;
     }
@@ -26,6 +47,7 @@ export default function Login() {
     // Basic email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Invalid Email", "Please enter a valid email address");
       return;
     }
@@ -33,8 +55,10 @@ export default function Login() {
     setLoading(true);
     try {
       await createUserWithEmailAndPassword(auth, email.trim(), pw);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace("/");
     } catch (e: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Sign up failed", e?.message ?? String(e));
     } finally {
       setLoading(false);
@@ -43,6 +67,7 @@ export default function Login() {
 
   const signIn = async () => {
     if (!email.trim() || !pw) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Error", "Please enter email and password");
       return;
     }
@@ -56,6 +81,7 @@ export default function Login() {
     // Basic email format validation (skip for mapped username)
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(loginEmail)) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Invalid Email", "Please enter a valid email address or username");
       return;
     }
@@ -63,8 +89,10 @@ export default function Login() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, loginEmail, pw);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace("/");
     } catch (e: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Sign in failed", e?.message ?? String(e));
     } finally {
       setLoading(false);
@@ -72,6 +100,7 @@ export default function Login() {
   };
 
   const handleSubmit = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (mode === "login") {
       signIn();
     } else {
@@ -79,91 +108,174 @@ export default function Login() {
     }
   };
 
+  const handleModeChange = (newMode: "login" | "signup") => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setMode(newMode);
+    setTosAccepted(false);
+  };
+
+  const handleTosToggle = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setTosAccepted(!tosAccepted);
+  };
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior="padding"
         style={styles.keyboardView}
       >
         <View style={styles.wrap}>
           <View style={styles.header}>
-            <Text style={styles.appName}>STANCLICKIN</Text>
-            <Text style={styles.tagline}>The creator-owned community</Text>
+            <Text style={[styles.appName, { color: theme.textColor, ...getGlowShadow(theme.primaryColor, 15) }]}>
+              STANCLICKIN
+            </Text>
+            <Text style={[styles.tagline, { color: theme.secondaryTextColor }]}>
+              The creator-owned community
+            </Text>
           </View>
 
           <View style={styles.modeTabs}>
-            <Pressable
-              style={[styles.modeTab, mode === "login" && styles.modeTabActive]}
-              onPress={() => {
-                setMode("login");
-                setTosAccepted(false);
-              }}
-            >
-              <Text style={[styles.modeTabText, mode === "login" && styles.modeTabTextActive]}>
-                Login
-              </Text>
-            </Pressable>
+            <Animated.View style={[{ flex: 1, transform: [{ scale: loginTabScale }] }]}>
+              <Pressable
+                style={[
+                  styles.modeTab,
+                  { backgroundColor: theme.surfaceColor },
+                  mode === "login" && {
+                    backgroundColor: theme.primaryColor,
+                    ...getGlowStyle(theme.primaryColor, 8),
+                  },
+                ]}
+                onPress={() => handleModeChange("login")}
+                {...loginTabPressHandlers}
+              >
+                <Text
+                  style={[
+                    styles.modeTabText,
+                    { color: theme.secondaryTextColor },
+                    mode === "login" && { color: theme.backgroundColor },
+                  ]}
+                >
+                  Login
+                </Text>
+              </Pressable>
+            </Animated.View>
 
-            <Pressable
-              style={[styles.modeTab, mode === "signup" && styles.modeTabActive]}
-              onPress={() => {
-                setMode("signup");
-                setTosAccepted(false);
-              }}
-            >
-              <Text style={[styles.modeTabText, mode === "signup" && styles.modeTabTextActive]}>
-                Sign Up
-              </Text>
-            </Pressable>
+            <Animated.View style={[{ flex: 1, transform: [{ scale: signupTabScale }] }]}>
+              <Pressable
+                style={[
+                  styles.modeTab,
+                  { backgroundColor: theme.surfaceColor },
+                  mode === "signup" && {
+                    backgroundColor: theme.primaryColor,
+                    ...getGlowStyle(theme.primaryColor, 8),
+                  },
+                ]}
+                onPress={() => handleModeChange("signup")}
+                {...signupTabPressHandlers}
+              >
+                <Text
+                  style={[
+                    styles.modeTabText,
+                    { color: theme.secondaryTextColor },
+                    mode === "signup" && { color: theme.backgroundColor },
+                  ]}
+                >
+                  Sign Up
+                </Text>
+              </Pressable>
+            </Animated.View>
           </View>
 
           <View style={styles.form}>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surfaceColor, color: theme.textColor },
+                emailFocused && {
+                  ...getGlowStyle(theme.primaryColor, 6),
+                },
+              ]}
               placeholder={mode === "login" ? "Email or Username" : "Email"}
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.mutedTextColor}
               autoCapitalize="none"
               keyboardType={mode === "login" ? "default" : "email-address"}
               value={email}
               onChangeText={setEmail}
               editable={!loading}
+              onFocus={() => setEmailFocused(true)}
+              onBlur={() => setEmailFocused(false)}
             />
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                { backgroundColor: theme.surfaceColor, color: theme.textColor },
+                pwFocused && {
+                  ...getGlowStyle(theme.primaryColor, 6),
+                },
+              ]}
               placeholder="Password"
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.mutedTextColor}
               secureTextEntry
               value={pw}
               onChangeText={setPw}
               editable={!loading}
               onSubmitEditing={handleSubmit}
+              onFocus={() => setPwFocused(true)}
+              onBlur={() => setPwFocused(false)}
             />
 
-            <Pressable
-              style={[styles.btn, loading && styles.btnDisabled]}
-              onPress={handleSubmit}
-              disabled={loading}
-            >
-              <Text style={styles.btnText}>
-                {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
-              </Text>
-            </Pressable>
+            <Animated.View style={{ transform: [{ scale: submitScale }] }}>
+              <Pressable
+                style={[
+                  styles.btn,
+                  {
+                    backgroundColor: theme.primaryColor,
+                    ...getGlowStyle(theme.primaryColor, 10),
+                  },
+                  loading && styles.btnDisabled,
+                ]}
+                onPress={handleSubmit}
+                disabled={loading}
+                {...submitPressHandlers}
+              >
+                <Text style={[styles.btnText, { color: theme.backgroundColor }]}>
+                  {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
+                </Text>
+              </Pressable>
+            </Animated.View>
 
             {mode === "signup" && (
               <>
-                <Pressable
-                  style={styles.tosRow}
-                  onPress={() => setTosAccepted(!tosAccepted)}
-                >
-                  <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
-                    {tosAccepted && <Text style={styles.checkmark}>✓</Text>}
-                  </View>
-                  <Text style={styles.tosText}>
-                    I agree to the Terms of Service. STANCLICKIN has zero tolerance for objectionable content, harassment, spam, or abusive behavior.
-                  </Text>
-                </Pressable>
+                <Animated.View style={{ transform: [{ scale: checkboxScale }] }}>
+                  <Pressable
+                    style={styles.tosRow}
+                    onPress={handleTosToggle}
+                    {...checkboxPressHandlers}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        { backgroundColor: theme.surfaceColor },
+                        tosAccepted && {
+                          backgroundColor: theme.primaryColor,
+                          ...getGlowStyle(theme.primaryColor, 6),
+                        },
+                      ]}
+                    >
+                      {tosAccepted && (
+                        <Text style={[styles.checkmark, { color: theme.backgroundColor }]}>
+                          ✓
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={[styles.tosText, { color: theme.secondaryTextColor }]}>
+                      I agree to the Terms of Service. STANCLICKIN has zero tolerance for objectionable content, harassment, spam, or abusive behavior.
+                    </Text>
+                  </Pressable>
+                </Animated.View>
 
-                <Text style={styles.hint}>
+                <Text style={[styles.hint, { color: theme.mutedTextColor }]}>
                   By signing up, you'll get access to exclusive content and the creator community.
                 </Text>
               </>
@@ -176,7 +288,7 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1 },
   keyboardView: { flex: 1 },
   wrap: {
     flex: 1,
@@ -192,55 +304,45 @@ const styles = StyleSheet.create({
   appName: {
     fontSize: 36,
     fontWeight: "900",
-    color: "#111",
-    letterSpacing: -1,
+    fontFamily: "SpaceMono",
+    letterSpacing: 2,
   },
   tagline: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
 
   modeTabs: {
     flexDirection: "row",
-    gap: 8,
+    gap: 12,
   },
   modeTab: {
-    flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
+    borderRadius: 12,
     alignItems: "center",
   },
-  modeTabActive: {
-    backgroundColor: "#111",
-  },
   modeTabText: {
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
     fontSize: 15,
-  },
-  modeTabTextActive: {
-    color: "#fff",
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
 
   form: {
     gap: 14,
   },
   input: {
-    borderWidth: 1,
-    borderColor: "#111",
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
+    fontFamily: "SpaceMono",
   },
   btn: {
     padding: 16,
     borderRadius: 12,
-    backgroundColor: "#111",
     alignItems: "center",
     marginTop: 6,
   },
@@ -248,46 +350,42 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   btnText: {
-    color: "#fff",
-    fontWeight: "900",
+    fontWeight: "700",
     fontSize: 16,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
   hint: {
     fontSize: 13,
-    color: "#666",
     textAlign: "center",
     lineHeight: 18,
     marginTop: 4,
+    fontFamily: "SpaceMono",
   },
   tosRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 12,
     marginBottom: 12,
   },
   checkbox: {
-    width: 22,
-    height: 22,
-    borderWidth: 2,
-    borderColor: "#111",
-    borderRadius: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 2,
   },
-  checkboxChecked: {
-    backgroundColor: "#111",
-  },
   checkmark: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "900",
+    fontFamily: "SpaceMono",
   },
   tosText: {
     flex: 1,
     fontSize: 13,
-    color: "#111",
     lineHeight: 18,
-    fontWeight: "600",
+    fontWeight: "500",
+    fontFamily: "SpaceMono",
   },
 });

@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, Pressable, StyleSheet, Dimensions, ImageBackground } from "react-native";
+import { View, Text, Pressable, StyleSheet, Dimensions, ImageBackground, Platform, Animated } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
+import { createPressAnimation } from "../src/lib/animations";
 
 const { width, height } = Dimensions.get("window");
 
 export default function Home() {
   const [hoveredButton, setHoveredButton] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
   const backgroundMusic = useRef<Audio.Sound | null>(null);
+  const musicStarted = useRef(false);
 
   // Load background music
   useEffect(() => {
@@ -32,8 +35,15 @@ export default function Home() {
 
         backgroundMusic.current = sound;
 
-        // Auto-play music after loading
-        await sound.playAsync();
+        try {
+          await sound.playAsync();
+          musicStarted.current = true;
+        } catch (playError) {
+          if (Platform.OS === "web") {
+            setNeedsUserInteraction(true);
+          }
+          console.log("Autoplay blocked, waiting for user interaction");
+        }
       } catch (error) {
         console.error("Error loading background music:", error);
       }
@@ -46,20 +56,33 @@ export default function Home() {
     };
   }, []);
 
-  // Play/pause based on screen focus
   useFocusEffect(
     React.useCallback(() => {
-      // Play when screen is focused
-      backgroundMusic.current?.playAsync();
+      if (musicStarted.current) {
+        backgroundMusic.current?.playAsync();
+      }
 
       return () => {
-        // Pause when screen loses focus
         backgroundMusic.current?.pauseAsync();
       };
     }, [])
   );
 
+  const startMusicIfNeeded = async () => {
+    if (needsUserInteraction && backgroundMusic.current && !musicStarted.current) {
+      try {
+        await backgroundMusic.current.playAsync();
+        musicStarted.current = true;
+        setNeedsUserInteraction(false);
+      } catch (e) {
+        console.log("Still cannot play audio");
+      }
+    }
+  };
+
   const toggleMute = async () => {
+    await startMusicIfNeeded();
+
     if (backgroundMusic.current) {
       if (isMuted) {
         await backgroundMusic.current.setVolumeAsync(0.5);
@@ -72,94 +95,141 @@ export default function Home() {
   };
 
   const handlePress = (route: string, buttonId: string) => {
+    startMusicIfNeeded();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     router.push(route as any);
   };
 
   return (
     <View style={styles.container}>
-      {/* Hero Background */}
       <ImageBackground
         source={require("../assets/images/hero-stan.png")}
         style={styles.heroBackground}
         resizeMode="cover"
       >
         <LinearGradient
-          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.85)']}
+          colors={['rgba(10,10,10,0)', 'rgba(10,10,10,0.5)', 'rgba(10,10,10,0.95)']}
           style={styles.gradient}
         />
       </ImageBackground>
 
-      {/* Mute Button */}
       <Pressable style={styles.muteButton} onPress={toggleMute}>
-        <Text style={styles.muteIcon}>{isMuted ? "🔇" : "🔊"}</Text>
+        <Text style={styles.muteIcon}>{isMuted ? "[x]" : "[=]"}</Text>
       </Pressable>
 
-      {/* Content */}
       <View style={styles.content}>
-        {/* Logo */}
         <View style={styles.logoSection}>
           <Text style={styles.logo}>STANCLICKIN</Text>
-          <Text style={styles.tagline}>THE OFFICIAL APP</Text>
+          <Text style={styles.tagline}>// THE OFFICIAL APP</Text>
         </View>
 
-        {/* Menu Buttons */}
         <View style={styles.menu}>
           <MenuButton
+            icon="◉"
             title="STANSPACE"
-            subtitle="Connect with the community"
+            subtitle="CONNECT WITH THE COMMUNITY"
             onPress={() => handlePress("/stanspace", "stanspace")}
+            accentColor="#ff3b30"
           />
 
           <MenuButton
+            icon="▶"
             title="STANHUB"
-            subtitle="Exclusive music videos"
+            subtitle="EXCLUSIVE MUSIC VIDEOS"
             onPress={() => handlePress("/stanhub", "stanhub")}
+            accentColor="#00ff88"
           />
 
           <MenuButton
+            icon="◆"
             title="FLAPPYCLICKIN"
-            subtitle="Challenge the leaderboard"
+            subtitle="CHALLENGE THE LEADERBOARD"
             onPress={() => handlePress("/flappyclickin", "flappyclickin")}
+            accentColor="#00d4ff"
           />
+        </View>
+
+        <View style={styles.footer}>
+          <Pressable
+            style={styles.settingsBtn}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/settings");
+            }}
+          >
+            <Text style={styles.settingsBtnText}>[ SETTINGS ]</Text>
+          </Pressable>
         </View>
       </View>
     </View>
   );
 }
 
-const MenuButton = ({ title, subtitle, onPress }: any) => {
-  const [pressed, setPressed] = useState(false);
+const MenuButton = ({ icon, title, subtitle, onPress, accentColor }: any) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const glow = useRef(new Animated.Value(0)).current;
+  const pressHandlers = createPressAnimation(scale);
+
+  const handlePressIn = () => {
+    pressHandlers.onPressIn();
+    Animated.timing(glow, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    pressHandlers.onPressOut();
+    Animated.timing(glow, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const glowOpacity = glow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.8],
+  });
 
   return (
-    <Pressable
-      style={[styles.menuButton, pressed && styles.menuButtonPressed]}
-      onPress={onPress}
-      onPressIn={() => {
-        setPressed(true);
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }}
-      onPressOut={() => setPressed(false)}
-    >
-      <LinearGradient
-        colors={pressed ? ['rgba(255,255,255,0.25)', 'rgba(255,255,255,0.15)'] : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.05)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.menuButtonGradient}
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
+        style={styles.menuButton}
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
       >
+        <Animated.View
+          style={[
+            styles.menuButtonGlow,
+            {
+              backgroundColor: accentColor,
+              opacity: glowOpacity,
+              shadowColor: accentColor,
+              shadowRadius: 20,
+              shadowOpacity: 0.8,
+            }
+          ]}
+        />
         <View style={styles.menuButtonContent}>
-          <Text style={styles.menuButtonTitle}>{title}</Text>
-          <Text style={styles.menuButtonSubtitle}>{subtitle}</Text>
+          <Text style={[styles.menuButtonIcon, { color: accentColor }]}>{icon}</Text>
+          <View style={styles.menuButtonText}>
+            <Text style={[styles.menuButtonTitle, { textShadowColor: accentColor }]}>{title}</Text>
+            <Text style={styles.menuButtonSubtitle}>{subtitle}</Text>
+          </View>
+          <Text style={[styles.menuButtonArrow, { color: accentColor }]}>→</Text>
         </View>
-      </LinearGradient>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#0a0a0a",
   },
   heroBackground: {
     position: "absolute",
@@ -175,25 +245,24 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 60,
     right: 24,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(10, 10, 10, 0.6)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.15)",
-    justifyContent: "center",
-    alignItems: "center",
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    borderRadius: 8,
     zIndex: 10,
   },
   muteIcon: {
-    fontSize: 16,
-    opacity: 0.8,
+    fontSize: 14,
+    fontFamily: "SpaceMono-Bold",
+    color: "#888",
   },
   content: {
     flex: 1,
     justifyContent: "space-between",
-    paddingTop: 60,
-    paddingBottom: 50,
+    paddingTop: 80,
+    paddingBottom: 40,
     paddingHorizontal: 20,
   },
   logoSection: {
@@ -201,50 +270,86 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   logo: {
-    fontSize: 42,
-    fontWeight: "900",
+    fontSize: 36,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
-    letterSpacing: 2,
+    letterSpacing: 4,
     textAlign: "center",
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 12,
+    textShadowColor: "#ff3b30",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
   },
   tagline: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "rgba(255, 255, 255, 0.7)",
-    letterSpacing: 3,
-    textTransform: "uppercase",
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    color: "rgba(255, 255, 255, 0.5)",
+    letterSpacing: 4,
   },
   menu: {
-    gap: 12,
+    gap: 16,
   },
   menuButton: {
-    borderRadius: 16,
+    borderRadius: 12,
     overflow: "hidden",
+    backgroundColor: "rgba(20, 20, 20, 0.8)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    position: "relative",
   },
-  menuButtonPressed: {
-    opacity: 0.8,
-  },
-  menuButtonGradient: {
-    paddingVertical: 20,
-    paddingHorizontal: 24,
+  menuButtonGlow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 12,
   },
   menuButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  menuButtonIcon: {
+    fontSize: 28,
+    fontFamily: "SpaceMono-Bold",
+    width: 36,
+    textAlign: "center",
+  },
+  menuButtonText: {
+    flex: 1,
     gap: 4,
   },
   menuButtonTitle: {
-    fontSize: 22,
-    fontWeight: "900",
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
     color: "#fff",
-    letterSpacing: 1,
+    letterSpacing: 2,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
   },
   menuButtonSubtitle: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "rgba(255, 255, 255, 0.6)",
+    fontSize: 10,
+    fontFamily: "SpaceMono",
+    color: "rgba(255, 255, 255, 0.4)",
+    letterSpacing: 1,
+  },
+  menuButtonArrow: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+  },
+  footer: {
+    alignItems: "center",
+  },
+  settingsBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  settingsBtnText: {
+    fontSize: 12,
+    fontFamily: "SpaceMono",
+    color: "rgba(255, 255, 255, 0.4)",
+    letterSpacing: 2,
   },
 });

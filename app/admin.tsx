@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, Alert, ActivityIndicator, ScrollView } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import { View, Text, StyleSheet, FlatList, Pressable, Alert, ActivityIndicator, Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { collection, query, where, onSnapshot, doc, deleteDoc, updateDoc, getDoc, orderBy, limit } from "firebase/firestore";
 import { auth, db } from "../src/lib/firebase";
+import { type ThemeId, getTheme } from "../src/lib/themes";
+import { createPressAnimation, getGlowStyle } from "../src/lib/animations";
 
 type Report = {
   id: string;
@@ -42,6 +45,26 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeTab, setActiveTab] = useState<"reports" | "users" | "pushErrors">("reports");
+  const [userTheme, setUserTheme] = useState<ThemeId | null>(null);
+
+  const theme = getTheme(userTheme);
+
+  // Animation values
+  const backScale = useRef(new Animated.Value(1)).current;
+  const backPressHandlers = createPressAnimation(backScale);
+
+  // Load user theme
+  useEffect(() => {
+    if (!me) return;
+
+    const userRef = doc(db, "users", me);
+    return onSnapshot(userRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setUserTheme(data?.theme || null);
+      }
+    });
+  }, [me]);
 
   // Check if user is admin
   useEffect(() => {
@@ -93,17 +116,31 @@ export default function AdminPanel() {
     });
   }, [isAdmin]);
 
+  const handleBack = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.back();
+  };
+
+  const handleTabChange = (tab: "reports" | "users" | "pushErrors") => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setActiveTab(tab);
+  };
+
   const dismissReport = async (reportId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       await updateDoc(doc(db, "reports", reportId), { status: "dismissed" });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Report dismissed");
     } catch (error) {
       console.error("Error dismissing report:", error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Error", "Failed to dismiss report");
     }
   };
 
   const deleteReportedContent = async (report: Report) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     Alert.alert(
       "Delete content",
       "This will permanently delete the reported content. Continue?",
@@ -113,6 +150,7 @@ export default function AdminPanel() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
             try {
               if (report.type === "post") {
                 // Delete post
@@ -125,9 +163,11 @@ export default function AdminPanel() {
               // Mark report as resolved
               await updateDoc(doc(db, "reports", report.id), { status: "resolved" });
 
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               Alert.alert("Deleted", "Content has been removed");
             } catch (error) {
               console.error("Error deleting content:", error);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
               Alert.alert("Error", "Failed to delete content");
             }
           },
@@ -137,7 +177,13 @@ export default function AdminPanel() {
   };
 
   const viewReportedPost = (postId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push({ pathname: "/post", params: { postId } });
+  };
+
+  const viewUserProfile = (uid: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({ pathname: "/u/[uid]", params: { uid } });
   };
 
   const getReasonText = (reason: string) => {
@@ -171,23 +217,31 @@ export default function AdminPanel() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ActivityIndicator size="large" style={{ marginTop: 40 }} />
+      <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]}>
+        <ActivityIndicator size="large" color={theme.primaryColor} style={{ marginTop: 40 }} />
       </SafeAreaView>
     );
   }
 
   if (!isAdmin) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]}>
         <View style={styles.wrap}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backText}>‹ Back</Text>
-          </Pressable>
+          <Animated.View style={{ transform: [{ scale: backScale }] }}>
+            <Pressable
+              style={[styles.backBtn, { backgroundColor: theme.surfaceColor }]}
+              onPress={handleBack}
+              {...backPressHandlers}
+            >
+              <Text style={[styles.backText, { color: theme.textColor }]}>Back</Text>
+            </Pressable>
+          </Animated.View>
 
           <View style={styles.notAdminContainer}>
-            <Text style={styles.notAdminTitle}>Access Denied</Text>
-            <Text style={styles.notAdminText}>You need admin privileges to access this page.</Text>
+            <Text style={[styles.notAdminTitle, { color: theme.textColor }]}>Access Denied</Text>
+            <Text style={[styles.notAdminText, { color: theme.secondaryTextColor }]}>
+              You need admin privileges to access this page.
+            </Text>
           </View>
         </View>
       </SafeAreaView>
@@ -195,22 +249,28 @@ export default function AdminPanel() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundColor }]}>
       <View style={styles.wrap}>
         <View style={styles.header}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backText}>‹ Back</Text>
-          </Pressable>
+          <Animated.View style={{ transform: [{ scale: backScale }] }}>
+            <Pressable
+              style={[styles.backBtn, { backgroundColor: theme.surfaceColor }]}
+              onPress={handleBack}
+              {...backPressHandlers}
+            >
+              <Text style={[styles.backText, { color: theme.textColor }]}>Back</Text>
+            </Pressable>
+          </Animated.View>
 
-          <Text style={styles.title}>Admin Panel</Text>
+          <Text style={[styles.title, { color: theme.textColor }]}>Admin Panel</Text>
         </View>
 
         {/* Contact Information */}
-        <View style={styles.contactBox}>
-          <Text style={styles.contactTitle}>App Contact Information</Text>
-          <Text style={styles.contactText}>Support: support@7thfloor.digital</Text>
-          <Text style={styles.contactText}>Moderation: moderation@7thfloor.digital</Text>
-          <Text style={styles.contactNote}>
+        <View style={[styles.contactBox, { backgroundColor: theme.surfaceColor }]}>
+          <Text style={[styles.contactTitle, { color: theme.textColor }]}>App Contact Information</Text>
+          <Text style={[styles.contactText, { color: theme.secondaryTextColor }]}>Support: support@7thfloor.digital</Text>
+          <Text style={[styles.contactText, { color: theme.secondaryTextColor }]}>Moderation: moderation@7thfloor.digital</Text>
+          <Text style={[styles.contactNote, { color: theme.mutedTextColor }]}>
             This contact information is published within the app for App Store compliance.
           </Text>
         </View>
@@ -218,26 +278,65 @@ export default function AdminPanel() {
         {/* Tabs */}
         <View style={styles.tabs}>
           <Pressable
-            style={[styles.tab, activeTab === "reports" && styles.tabActive]}
-            onPress={() => setActiveTab("reports")}
+            style={[
+              styles.tab,
+              { backgroundColor: theme.surfaceColor },
+              activeTab === "reports" && {
+                backgroundColor: theme.primaryColor,
+                ...getGlowStyle(theme.primaryColor, 6),
+              },
+            ]}
+            onPress={() => handleTabChange("reports")}
           >
-            <Text style={[styles.tabText, activeTab === "reports" && styles.tabTextActive]}>
+            <Text
+              style={[
+                styles.tabText,
+                { color: theme.secondaryTextColor },
+                activeTab === "reports" && { color: theme.backgroundColor },
+              ]}
+            >
               Reports ({reports.length})
             </Text>
           </Pressable>
           <Pressable
-            style={[styles.tab, activeTab === "users" && styles.tabActive]}
-            onPress={() => setActiveTab("users")}
+            style={[
+              styles.tab,
+              { backgroundColor: theme.surfaceColor },
+              activeTab === "users" && {
+                backgroundColor: theme.primaryColor,
+                ...getGlowStyle(theme.primaryColor, 6),
+              },
+            ]}
+            onPress={() => handleTabChange("users")}
           >
-            <Text style={[styles.tabText, activeTab === "users" && styles.tabTextActive]}>
+            <Text
+              style={[
+                styles.tabText,
+                { color: theme.secondaryTextColor },
+                activeTab === "users" && { color: theme.backgroundColor },
+              ]}
+            >
               Users ({users.length})
             </Text>
           </Pressable>
           <Pressable
-            style={[styles.tab, activeTab === "pushErrors" && styles.tabActive]}
-            onPress={() => setActiveTab("pushErrors")}
+            style={[
+              styles.tab,
+              { backgroundColor: theme.surfaceColor },
+              activeTab === "pushErrors" && {
+                backgroundColor: theme.primaryColor,
+                ...getGlowStyle(theme.primaryColor, 6),
+              },
+            ]}
+            onPress={() => handleTabChange("pushErrors")}
           >
-            <Text style={[styles.tabText, activeTab === "pushErrors" && styles.tabTextActive]}>
+            <Text
+              style={[
+                styles.tabText,
+                { color: theme.secondaryTextColor },
+                activeTab === "pushErrors" && { color: theme.backgroundColor },
+              ]}
+            >
               Push ({pushErrors.length})
             </Text>
           </Pressable>
@@ -245,63 +344,65 @@ export default function AdminPanel() {
 
         {activeTab === "reports" ? (
           <>
-            <Text style={styles.sectionTitle}>Pending Reports</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textColor }]}>Pending Reports</Text>
 
-        {reports.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No pending reports</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={reports}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={{ paddingBottom: 100 }}
-            renderItem={({ item }) => (
-              <View style={styles.reportCard}>
-                <View style={styles.reportHeader}>
-                  <Text style={styles.reportType}>{item.type.toUpperCase()}</Text>
-                  <Text style={styles.reportTime}>{getTimeAgo(item.createdAt)}</Text>
-                </View>
-
-                <Text style={styles.reportReason}>Reason: {getReasonText(item.reason)}</Text>
-                <Text style={styles.reportDetails}>
-                  Reported by: {item.reportedBy}
-                </Text>
-
-                <View style={styles.reportActions}>
-                  <Pressable
-                    style={[styles.actionBtn, styles.viewBtn]}
-                    onPress={() => viewReportedPost(item.postId)}
-                  >
-                    <Text style={styles.actionBtnText}>View</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={[styles.actionBtn, styles.deleteBtn]}
-                    onPress={() => deleteReportedContent(item)}
-                  >
-                    <Text style={styles.actionBtnTextWhite}>Delete</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={[styles.actionBtn, styles.dismissBtn]}
-                    onPress={() => dismissReport(item.id)}
-                  >
-                    <Text style={styles.actionBtnText}>Dismiss</Text>
-                  </Pressable>
-                </View>
+            {reports.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={[styles.emptyText, { color: theme.secondaryTextColor }]}>No pending reports</Text>
               </View>
+            ) : (
+              <FlatList
+                data={reports}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                renderItem={({ item }) => (
+                  <View style={[styles.reportCard, { backgroundColor: theme.surfaceColor }]}>
+                    <View style={styles.reportHeader}>
+                      <Text style={[styles.reportType, { backgroundColor: theme.primaryColor, color: theme.backgroundColor }]}>
+                        {item.type.toUpperCase()}
+                      </Text>
+                      <Text style={[styles.reportTime, { color: theme.mutedTextColor }]}>{getTimeAgo(item.createdAt)}</Text>
+                    </View>
+
+                    <Text style={[styles.reportReason, { color: theme.textColor }]}>Reason: {getReasonText(item.reason)}</Text>
+                    <Text style={[styles.reportDetails, { color: theme.secondaryTextColor }]}>
+                      Reported by: {item.reportedBy}
+                    </Text>
+
+                    <View style={styles.reportActions}>
+                      <Pressable
+                        style={[styles.actionBtn, styles.viewBtn, { backgroundColor: theme.surfaceGlow }]}
+                        onPress={() => viewReportedPost(item.postId)}
+                      >
+                        <Text style={[styles.actionBtnText, { color: theme.textColor }]}>View</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[styles.actionBtn, styles.deleteBtn, { backgroundColor: theme.primaryColor }]}
+                        onPress={() => deleteReportedContent(item)}
+                      >
+                        <Text style={[styles.actionBtnTextWhite, { color: theme.backgroundColor }]}>Delete</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[styles.actionBtn, styles.dismissBtn, { backgroundColor: theme.surfaceGlow }]}
+                        onPress={() => dismissReport(item.id)}
+                      >
+                        <Text style={[styles.actionBtnText, { color: theme.textColor }]}>Dismiss</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+              />
             )}
-          />
-        )}
           </>
         ) : activeTab === "users" ? (
           <>
-            <Text style={styles.sectionTitle}>User Directory</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textColor }]}>User Directory</Text>
 
             {users.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>No users found</Text>
+                <Text style={[styles.emptyText, { color: theme.secondaryTextColor }]}>No users found</Text>
               </View>
             ) : (
               <FlatList
@@ -309,20 +410,22 @@ export default function AdminPanel() {
                 keyExtractor={(item) => item.uid}
                 contentContainerStyle={{ paddingBottom: 100 }}
                 renderItem={({ item }) => (
-                  <View style={styles.userCard}>
+                  <View style={[styles.userCard, { backgroundColor: theme.surfaceColor }]}>
                     <View style={styles.userHeader}>
-                      <Text style={styles.username}>@{item.username}</Text>
+                      <Text style={[styles.username, { color: theme.textColor }]}>@{item.username}</Text>
                       {item.isAdmin && (
-                        <Text style={styles.adminBadge}>ADMIN</Text>
+                        <Text style={[styles.adminBadge, { backgroundColor: theme.accentColor, color: theme.backgroundColor }]}>
+                          ADMIN
+                        </Text>
                       )}
                     </View>
-                    <Text style={styles.userEmail}>{item.email || "No email"}</Text>
-                    <Text style={styles.userUid}>UID: {item.uid}</Text>
+                    <Text style={[styles.userEmail, { color: theme.secondaryTextColor }]}>{item.email || "No email"}</Text>
+                    <Text style={[styles.userUid, { color: theme.mutedTextColor }]}>UID: {item.uid}</Text>
                     <Pressable
-                      style={styles.viewProfileBtn}
-                      onPress={() => router.push({ pathname: "/u/[uid]", params: { uid: item.uid } })}
+                      style={[styles.viewProfileBtn, { backgroundColor: theme.surfaceGlow }]}
+                      onPress={() => viewUserProfile(item.uid)}
                     >
-                      <Text style={styles.viewProfileText}>View Profile</Text>
+                      <Text style={[styles.viewProfileText, { color: theme.textColor }]}>View Profile</Text>
                     </Pressable>
                   </View>
                 )}
@@ -331,12 +434,14 @@ export default function AdminPanel() {
           </>
         ) : (
           <>
-            <Text style={styles.sectionTitle}>Push Notification Errors (Last 50)</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textColor }]}>Push Notification Errors (Last 50)</Text>
 
             {pushErrors.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>✅ No push notification errors</Text>
-                <Text style={[styles.emptyText, { fontSize: 14, marginTop: 8 }]}>
+                <Text style={[styles.emptyText, { color: theme.primaryColor }]}>
+                  ✓ No push notification errors
+                </Text>
+                <Text style={[styles.emptySubtext, { color: theme.secondaryTextColor }]}>
                   This is good! All push notifications are being delivered successfully.
                 </Text>
               </View>
@@ -346,15 +451,17 @@ export default function AdminPanel() {
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ paddingBottom: 100 }}
                 renderItem={({ item }) => (
-                  <View style={styles.errorCard}>
+                  <View style={[styles.errorCard, { backgroundColor: theme.surfaceColor }]}>
                     <View style={styles.errorHeader}>
-                      <Text style={styles.errorType}>{item.type}</Text>
-                      <Text style={styles.errorTime}>
+                      <Text style={[styles.errorType, { backgroundColor: theme.accentColor, color: theme.backgroundColor }]}>
+                        {item.type}
+                      </Text>
+                      <Text style={[styles.errorTime, { color: theme.mutedTextColor }]}>
                         {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : 'Unknown'}
                       </Text>
                     </View>
-                    <Text style={styles.errorMessage}>Error: {item.error}</Text>
-                    <Text style={styles.errorUid}>User: {item.recipientUid}</Text>
+                    <Text style={[styles.errorMessage, { color: theme.textColor }]}>Error: {item.error}</Text>
+                    <Text style={[styles.errorUid, { color: theme.secondaryTextColor }]}>User: {item.recipientUid}</Text>
                   </View>
                 )}
               />
@@ -367,7 +474,7 @@ export default function AdminPanel() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1 },
   wrap: { flex: 1, padding: 16 },
 
   header: {
@@ -379,58 +486,51 @@ const styles = StyleSheet.create({
   backBtn: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#111",
+    borderRadius: 12,
   },
-  backText: { fontWeight: "900", color: "#111" },
+  backText: { fontWeight: "700", fontFamily: "SpaceMono" },
 
   title: {
     fontSize: 24,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
   },
 
   contactBox: {
     padding: 16,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#f9f9f9",
     marginBottom: 20,
   },
   contactTitle: {
     fontSize: 16,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
     marginBottom: 8,
+    fontFamily: "SpaceMono",
   },
   contactText: {
     fontSize: 14,
-    color: "#111",
     marginBottom: 4,
     fontWeight: "600",
+    fontFamily: "SpaceMono",
   },
   contactNote: {
     fontSize: 12,
-    color: "#666",
     marginTop: 8,
     fontStyle: "italic",
+    fontFamily: "SpaceMono",
   },
 
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
     marginBottom: 12,
+    fontFamily: "SpaceMono",
   },
 
   reportCard: {
     padding: 16,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
     marginBottom: 12,
   },
 
@@ -443,31 +543,30 @@ const styles = StyleSheet.create({
 
   reportType: {
     fontSize: 12,
-    fontWeight: "900",
-    color: "#fff",
-    backgroundColor: "#ff3b30",
+    fontWeight: "700",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 4,
+    borderRadius: 6,
+    fontFamily: "SpaceMono",
   },
 
   reportTime: {
     fontSize: 12,
-    color: "#666",
     fontWeight: "600",
+    fontFamily: "SpaceMono",
   },
 
   reportReason: {
     fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
     marginBottom: 4,
+    fontFamily: "SpaceMono",
   },
 
   reportDetails: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 12,
+    fontFamily: "SpaceMono",
   },
 
   reportActions: {
@@ -483,32 +582,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  viewBtn: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#111",
-  },
+  viewBtn: {},
 
-  deleteBtn: {
-    backgroundColor: "#ff3b30",
-  },
+  deleteBtn: {},
 
-  dismissBtn: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#666",
-  },
+  dismissBtn: {},
 
   actionBtnText: {
     fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
+    fontFamily: "SpaceMono",
   },
 
   actionBtnTextWhite: {
     fontSize: 14,
-    fontWeight: "900",
-    color: "#fff",
+    fontWeight: "700",
+    fontFamily: "SpaceMono",
   },
 
   emptyState: {
@@ -518,8 +607,15 @@ const styles = StyleSheet.create({
 
   emptyText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
+    fontFamily: "SpaceMono",
+  },
+
+  emptySubtext: {
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+    fontFamily: "SpaceMono",
   },
 
   notAdminContainer: {
@@ -531,15 +627,15 @@ const styles = StyleSheet.create({
 
   notAdminTitle: {
     fontSize: 24,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
     marginBottom: 12,
+    fontFamily: "SpaceMono",
   },
 
   notAdminText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
+    fontFamily: "SpaceMono",
   },
 
   tabs: {
@@ -551,34 +647,20 @@ const styles = StyleSheet.create({
   tab: {
     flex: 1,
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    borderRadius: 12,
     alignItems: "center",
   },
 
-  tabActive: {
-    backgroundColor: "#111",
-  },
-
   tabText: {
-    fontWeight: "900",
-    color: "#111",
-    fontSize: 14,
-  },
-
-  tabTextActive: {
-    color: "#fff",
+    fontWeight: "700",
+    fontSize: 13,
+    fontFamily: "SpaceMono",
   },
 
   userCard: {
     padding: 16,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#111",
-    backgroundColor: "#fff",
     marginBottom: 12,
   },
 
@@ -591,38 +673,33 @@ const styles = StyleSheet.create({
 
   username: {
     fontSize: 16,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
+    fontFamily: "SpaceMono",
   },
 
   adminBadge: {
     fontSize: 10,
-    fontWeight: "900",
-    color: "#fff",
-    backgroundColor: "#ff9500",
+    fontWeight: "700",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 4,
+    borderRadius: 6,
+    fontFamily: "SpaceMono",
   },
 
   userEmail: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 4,
     fontWeight: "600",
+    fontFamily: "SpaceMono",
   },
 
   userUid: {
     fontSize: 11,
-    color: "#999",
     marginBottom: 12,
-    fontFamily: "monospace",
+    fontFamily: "SpaceMono",
   },
 
   viewProfileBtn: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#111",
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 8,
@@ -631,16 +708,13 @@ const styles = StyleSheet.create({
 
   viewProfileText: {
     fontSize: 14,
-    fontWeight: "900",
-    color: "#111",
+    fontWeight: "700",
+    fontFamily: "SpaceMono",
   },
 
   errorCard: {
     padding: 16,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ff9500",
-    backgroundColor: "#fff9f0",
     marginBottom: 12,
   },
 
@@ -653,29 +727,27 @@ const styles = StyleSheet.create({
 
   errorType: {
     fontSize: 12,
-    fontWeight: "900",
-    color: "#fff",
-    backgroundColor: "#ff9500",
+    fontWeight: "700",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    fontFamily: "SpaceMono",
   },
 
   errorTime: {
     fontSize: 11,
-    color: "#999",
+    fontFamily: "SpaceMono",
   },
 
   errorMessage: {
     fontSize: 14,
-    color: "#111",
     marginBottom: 4,
     fontWeight: "600",
+    fontFamily: "SpaceMono",
   },
 
   errorUid: {
     fontSize: 12,
-    color: "#666",
-    fontFamily: "monospace",
+    fontFamily: "SpaceMono",
   },
 });

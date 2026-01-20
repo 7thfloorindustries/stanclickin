@@ -1,13 +1,27 @@
-import React, { useEffect, useState, useRef } from "react";
-import { View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, Platform, ActionSheetIOS, Animated, Share } from "react-native";
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, Share } from "react-native";
 import { Image } from "expo-image";
+import { BlurView } from "expo-blur";
 import { router } from "expo-router";
 import { doc, increment, onSnapshot, runTransaction, serverTimestamp, getDoc, updateDoc, deleteDoc, collection, getDocs, setDoc } from "firebase/firestore";
 import * as Haptics from "expo-haptics";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withSequence,
+  withDelay,
+  runOnJS,
+  Easing,
+} from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { auth, db } from "../src/lib/firebase";
 import { Avatar } from "./Avatar";
 import { createNotification } from "../src/lib/notifications";
 import { renderTextWithLinks } from "../src/lib/textUtils";
+import { type Theme, getTheme } from "../src/lib/themes";
+import { getGlowStyle, reanimatedSpringConfigs } from "../src/lib/animations";
 
 export type Post = {
   id: string;
@@ -20,23 +34,139 @@ export type Post = {
   repostCount?: number;
   shareCount?: number;
   engagementCount?: number;
-  repostedBy?: string; // Username of person who reposted (for feed display)
-  repostedByUid?: string; // UID of person who reposted
+  repostedBy?: string;
+  repostedByUid?: string;
 };
 
 type PostCardProps = {
   post: Post;
   username?: string;
   onUsernameLoad?: (username: string) => void;
-  isDarkTheme?: boolean;
+  theme?: Theme;
+  onRepostRemoved?: (postId: string) => void;
 };
 
-const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, isDarkTheme = false }: PostCardProps) => {
+// Particle component for like burst effect
+const LikeParticle = ({
+  angle,
+  color,
+  active,
+  delay = 0,
+}: {
+  angle: number;
+  color: string;
+  active: boolean;
+  delay?: number;
+}) => {
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (active) {
+      const radians = (angle * Math.PI) / 180;
+      const distance = 40 + Math.random() * 20;
+      const targetX = Math.cos(radians) * distance;
+      const targetY = Math.sin(radians) * distance;
+
+      translateX.value = withDelay(delay, withTiming(targetX, { duration: 400, easing: Easing.out(Easing.cubic) }));
+      translateY.value = withDelay(delay, withTiming(targetY, { duration: 400, easing: Easing.out(Easing.cubic) }));
+      scale.value = withDelay(delay, withSequence(
+        withTiming(1.2, { duration: 100 }),
+        withTiming(0, { duration: 300 })
+      ));
+      opacity.value = withDelay(delay, withSequence(
+        withTiming(1, { duration: 50 }),
+        withTiming(0, { duration: 350 })
+      ));
+    } else {
+      translateX.value = 0;
+      translateY.value = 0;
+      scale.value = 1;
+      opacity.value = 0;
+    }
+  }, [active]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View
+      style={[
+        {
+          position: "absolute",
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: color,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+};
+
+// Heart overlay component
+const HeartOverlay = ({ visible, theme }: { visible: boolean; theme: Theme }) => {
+  const scale = useSharedValue(0);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      scale.value = withSequence(
+        withTiming(0, { duration: 0 }),
+        withSpring(1.3, reanimatedSpringConfigs.bouncy),
+        withTiming(1, { duration: 100 })
+      );
+      opacity.value = withSequence(
+        withTiming(1, { duration: 0 }),
+        withDelay(400, withTiming(0, { duration: 300 }))
+      );
+    }
+  }, [visible]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  if (!visible) return null;
+
+  return (
+    <Animated.View style={[styles.heartOverlay, animatedStyle]}>
+      <Text style={[styles.heartOverlayIcon, { color: "#ff3b30", textShadowColor: "#ff3b30" }]}>
+        ♥
+      </Text>
+      {/* Particle burst */}
+      <View style={styles.particleContainer}>
+        {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+          <LikeParticle
+            key={angle}
+            angle={angle}
+            color="#ff3b30"
+            active={visible}
+            delay={i * 25}
+          />
+        ))}
+      </View>
+    </Animated.View>
+  );
+};
+
+const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, theme: providedTheme, onRepostRemoved }: PostCardProps) => {
+  const theme = providedTheme || getTheme();
   const uid = auth.currentUser?.uid;
   const [liked, setLiked] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
   const [reposted, setReposted] = useState(false);
-  const [author, setAuthor] = useState<string>(providedUsername || "…");
+  const [author, setAuthor] = useState<string>(providedUsername || "...");
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
   const [likes, setLikes] = useState(post.likeCount ?? 0);
   const [reposts, setReposts] = useState(post.repostCount ?? 0);
@@ -44,18 +174,48 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editText, setEditText] = useState(post.text);
+  const [showHeartOverlay, setShowHeartOverlay] = useState(false);
+  const [showParticleBurst, setShowParticleBurst] = useState(false);
 
   const comments = post.commentCount ?? 0;
   const isMyPost = uid === post.uid;
 
-  // Animation values
-  const likeScale = useRef(new Animated.Value(1)).current;
-  const commentScale = useRef(new Animated.Value(1)).current;
-  const bookmarkScale = useRef(new Animated.Value(1)).current;
-  const repostScale = useRef(new Animated.Value(1)).current;
-  const shareScale = useRef(new Animated.Value(1)).current;
+  // Reanimated animation values
+  const cardScale = useSharedValue(1);
+  const cardBgColor = useSharedValue(theme.surfaceColor);
+  const likeScale = useSharedValue(1);
+  const commentScale = useSharedValue(1);
+  const bookmarkScale = useSharedValue(1);
+  const repostScale = useSharedValue(1);
+  const shareScale = useSharedValue(1);
 
-  // Check if post can be edited (within 2 minutes)
+  // Double-tap last tap time tracking
+  const lastTapTime = useRef(0);
+
+  const cardAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: cardScale.value }],
+  }));
+
+  const likeAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: likeScale.value }],
+  }));
+
+  const commentAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: commentScale.value }],
+  }));
+
+  const bookmarkAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: bookmarkScale.value }],
+  }));
+
+  const repostAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: repostScale.value }],
+  }));
+
+  const shareAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: shareScale.value }],
+  }));
+
   const canEdit = () => {
     if (!post.createdAt?.seconds) return false;
     const postTime = post.createdAt.seconds * 1000;
@@ -64,7 +224,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     return now - postTime < twoMinutes;
   };
 
-  // Sync likes, reposts, and shares when post prop updates
   useEffect(() => {
     setLikes(post.likeCount ?? 0);
   }, [post.likeCount]);
@@ -77,7 +236,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     setShares(post.shareCount ?? 0);
   }, [post.shareCount]);
 
-  // Format timestamp
   const getTimeAgo = (timestamp: any) => {
     if (!timestamp?.seconds) return "";
     const now = Date.now();
@@ -87,14 +245,13 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return "just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return "NOW";
+    if (diffMins < 60) return `${diffMins}M`;
+    if (diffHours < 24) return `${diffHours}H`;
+    if (diffDays < 7) return `${diffDays}D`;
     return new Date(postTime).toLocaleDateString();
   };
 
-  // Load username and profile picture if not provided
   useEffect(() => {
     if (providedUsername) {
       setAuthor(providedUsername);
@@ -131,58 +288,50 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     return onSnapshot(likeRef, (snap) => setLiked(snap.exists()));
   }, [post.id, uid]);
 
-  // Listen to bookmark state
   useEffect(() => {
     if (!uid) return;
     const bookmarkRef = doc(db, "bookmarks", uid, "posts", post.id);
     return onSnapshot(bookmarkRef, (snap) => setBookmarked(snap.exists()));
   }, [post.id, uid]);
 
-  // Listen to repost state
   useEffect(() => {
     if (!uid) return;
     const repostRef = doc(db, "posts", post.id, "reposts", uid);
     return onSnapshot(repostRef, (snap) => setReposted(snap.exists()));
   }, [post.id, uid]);
 
-  // Animation helpers
-  const animateButton = (scale: Animated.Value) => {
-    Animated.sequence([
-      Animated.timing(scale, {
-        toValue: 1.15,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scale, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
+  const animateBounce = (scale: Animated.SharedValue<number>) => {
+    scale.value = withSequence(
+      withSpring(1.2, reanimatedSpringConfigs.bouncy),
+      withSpring(1, reanimatedSpringConfigs.snappy)
+    );
   };
 
-  const toggleLike = async () => {
+  const toggleLike = async (showOverlay = false) => {
     const user = auth.currentUser;
     if (!user) return Alert.alert("Not logged in");
 
-    // Strong haptic feedback - both impact and notification
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       if (!liked) {
-        // Success notification for new likes
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-    } catch (error) {
-      console.error("Haptic error:", error);
-    }
+    } catch (error) {}
 
-    // Animate the button
-    animateButton(likeScale);
+    animateBounce(likeScale);
+
+    if (showOverlay && !liked) {
+      setShowHeartOverlay(true);
+      setShowParticleBurst(true);
+      setTimeout(() => {
+        setShowHeartOverlay(false);
+        setShowParticleBurst(false);
+      }, 800);
+    }
 
     const postRef = doc(db, "posts", post.id);
     const likeRef = doc(db, "posts", post.id, "likes", user.uid);
 
-    // Optimistic update
     const isCurrentlyLiked = liked;
     setLiked(!isCurrentlyLiked);
     setLikes((prev) => (isCurrentlyLiked ? prev - 1 : prev + 1));
@@ -208,7 +357,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
         }
       });
 
-      // Create notification after successful transaction (only for new likes)
       if (!wasLiked && post.uid !== user.uid) {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         const username = userDoc.exists() ? userDoc.data()?.username : "user";
@@ -222,7 +370,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
         });
       }
     } catch (error) {
-      // Revert optimistic update on error
       setLiked(isCurrentlyLiked);
       setLikes((prev) => (isCurrentlyLiked ? prev + 1 : prev - 1));
       Alert.alert("Error", "Failed to update like");
@@ -230,16 +377,11 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
   };
 
   const openComments = async () => {
-    // Haptic feedback
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (error) {
-      console.error("Haptic error:", error);
-    }
+    } catch (error) {}
 
-    // Animate the button
-    animateButton(commentScale);
-
+    animateBounce(commentScale);
     router.push({ pathname: "/post", params: { postId: post.id, text: post.text } });
   };
 
@@ -247,17 +389,12 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     const user = auth.currentUser;
     if (!user) return Alert.alert("Not logged in");
 
-    // Haptic feedback
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (error) {
-      console.error("Haptic error:", error);
-    }
+    } catch (error) {}
 
-    // Animate the button
-    animateButton(bookmarkScale);
+    animateBounce(bookmarkScale);
 
-    // Optimistic update
     const isCurrentlyBookmarked = bookmarked;
     setBookmarked(!isCurrentlyBookmarked);
 
@@ -265,10 +402,8 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
       const bookmarkRef = doc(db, "bookmarks", user.uid, "posts", post.id);
 
       if (isCurrentlyBookmarked) {
-        // Remove bookmark
         await deleteDoc(bookmarkRef);
       } else {
-        // Add bookmark
         const bookmarkData: any = {
           postId: post.id,
           uid: post.uid,
@@ -277,7 +412,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
           bookmarkedAt: serverTimestamp(),
         };
 
-        // Only add imageUrl if it exists
         if (post.imageUrl) {
           bookmarkData.imageUrl = post.imageUrl;
         }
@@ -286,7 +420,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
       }
     } catch (error) {
       console.error("Bookmark error:", error);
-      // Revert optimistic update on error
       setBookmarked(isCurrentlyBookmarked);
       Alert.alert("Error", "Failed to update bookmark");
     }
@@ -296,21 +429,15 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     const user = auth.currentUser;
     if (!user) return Alert.alert("Not logged in");
 
-    // Strong haptic feedback - both impact and notification
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       if (!reposted) {
-        // Success notification for new reposts
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-    } catch (error) {
-      console.error("Haptic error:", error);
-    }
+    } catch (error) {}
 
-    // Animate the button
-    animateButton(repostScale);
+    animateBounce(repostScale);
 
-    // Optimistic update
     const isCurrentlyReposted = reposted;
     setReposted(!isCurrentlyReposted);
     setReposts((prev) => (isCurrentlyReposted ? prev - 1 : prev + 1));
@@ -325,24 +452,20 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
         const postSnap = await tx.get(postRef);
         const data = postSnap.data() as any;
 
-        // Initialize engagementCount if missing
         const baseEng = (data?.likeCount ?? 0) + (data?.commentCount ?? 0) + (data?.repostCount ?? 0);
         if (data && data.engagementCount == null) tx.update(postRef, { engagementCount: baseEng });
 
         if (repostSnap.exists()) {
-          // Unrepost
           tx.delete(repostRef);
           tx.update(postRef, { repostCount: increment(-1), engagementCount: increment(-1) });
           wasReposted = true;
         } else {
-          // Repost
           tx.set(repostRef, { uid: user.uid, createdAt: serverTimestamp() });
           tx.update(postRef, { repostCount: increment(1), engagementCount: increment(1) });
           wasReposted = false;
         }
       });
 
-      // Create notification for new reposts (only for other users' posts)
       if (!wasReposted && post.uid !== user.uid) {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         const username = userDoc.exists() ? userDoc.data()?.username : "user";
@@ -355,8 +478,11 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
           postId: post.id,
         });
       }
+
+      if (wasReposted && onRepostRemoved) {
+        onRepostRemoved(post.id);
+      }
     } catch (error) {
-      // Revert optimistic update on error
       setReposted(isCurrentlyReposted);
       setReposts((prev) => (isCurrentlyReposted ? prev + 1 : prev - 1));
       Alert.alert("Error", "Failed to update repost");
@@ -365,16 +491,11 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
 
   const sharePost = async () => {
     try {
-      // Haptic feedback
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (error) {
-      console.error("Haptic error:", error);
-    }
+    } catch (error) {}
 
-    // Animate the button
-    animateButton(shareScale);
+    animateBounce(shareScale);
 
-    // Create share text
     const postPreview = post.text.length > 100
       ? post.text.substring(0, 100) + "..."
       : post.text;
@@ -388,28 +509,21 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
         message: shareText,
       });
 
-      // If share was successful, increment share count
       if (result.action === Share.sharedAction) {
-        // Optimistically update UI
         setShares((prev) => prev + 1);
 
-        // Update Firestore
         const postRef = doc(db, "posts", post.id);
         await updateDoc(postRef, {
           shareCount: increment(1),
           engagementCount: increment(1),
         });
 
-        // Success haptic
         try {
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch (error) {
-          console.error("Haptic error:", error);
-        }
+        } catch (error) {}
       }
     } catch (error: any) {
       console.error("Error sharing:", error);
-      // Don't show alert for user cancellation
       if (error?.message && !error.message.includes("cancel")) {
         Alert.alert("Error", "Failed to share post");
       }
@@ -437,7 +551,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
 
   const deletePost = async () => {
     try {
-      // Delete all subcollections first
       const likesSnap = await getDocs(collection(db, "posts", post.id, "likes"));
       const commentsSnap = await getDocs(collection(db, "posts", post.id, "comments"));
 
@@ -446,7 +559,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
       commentsSnap.docs.forEach((d) => batch.delete(d.ref));
       await batch.commit();
 
-      // Delete the post itself
       await deleteDoc(doc(db, "posts", post.id));
       Alert.alert("Deleted", "Post has been deleted");
     } catch (error) {
@@ -544,9 +656,6 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
     }
     options.push("Cancel");
 
-    const cancelButtonIndex = options.length - 1;
-    const destructiveButtonIndex = options.indexOf("Delete");
-
     const onSelect = (i: number) => {
       const choice = options[i];
       if (choice === "Edit") {
@@ -562,48 +671,95 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
       }
     };
 
-    if (Platform.OS === "ios") {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex, destructiveButtonIndex },
-        (buttonIndex) => onSelect(buttonIndex)
-      );
-    } else {
-      const buttons = options.filter((o) => o !== "Cancel");
-      Alert.alert("Post options", "Choose an action", buttons.map((b) => ({ text: b, onPress: () => onSelect(options.indexOf(b)) })));
-    }
+    const buttons = options.filter((o) => o !== "Cancel");
+    Alert.alert("Post options", "Choose an action", buttons.map((b) => ({ text: b, onPress: () => onSelect(options.indexOf(b)) })));
   };
 
+  // Handle double tap
+  const handleDoubleTap = useCallback(() => {
+    if (!liked) {
+      toggleLike(true);
+    }
+  }, [liked]);
+
+  // Handle single tap for navigation
+  const handleSingleTap = useCallback(() => {
+    openComments();
+  }, []);
+
+  // Tap tracking for double-tap detection
+  const handleTap = useCallback(() => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+
+    if (now - lastTapTime.current < DOUBLE_TAP_DELAY) {
+      // Double tap
+      handleDoubleTap();
+      lastTapTime.current = 0;
+    } else {
+      // Single tap - wait to see if there's a second tap
+      lastTapTime.current = now;
+      setTimeout(() => {
+        if (lastTapTime.current === now) {
+          handleSingleTap();
+        }
+      }, DOUBLE_TAP_DELAY);
+    }
+  }, [handleDoubleTap, handleSingleTap]);
+
+  // Press animation handlers
+  const handlePressIn = () => {
+    cardScale.value = withSpring(0.98, reanimatedSpringConfigs.snappy);
+  };
+
+  const handlePressOut = () => {
+    cardScale.value = withSpring(1, reanimatedSpringConfigs.smooth);
+  };
+
+  const glowShadow = getGlowStyle(theme.glowColor, 8);
+
   return (
-    <View style={styles.post}>
+    <Animated.View style={[styles.post, { backgroundColor: theme.surfaceColor }, glowShadow, cardAnimatedStyle]}>
       {post.repostedBy && (
         <View style={styles.repostIndicator}>
-          <Text style={styles.repostIcon}>🔁</Text>
-          <Text style={[styles.repostText, isDarkTheme && styles.repostTextDark]}>Reposted by @{post.repostedBy}</Text>
+          <Text style={[styles.repostIcon, { color: theme.primaryColor }]}>{"↻"}</Text>
+          <Text style={[styles.repostText, { color: theme.secondaryTextColor }]}>
+            REPOSTED BY @{post.repostedBy.toUpperCase()}
+          </Text>
         </View>
       )}
+
       <View style={styles.postHeader}>
         <Pressable style={styles.userInfo} onPress={() => router.push(`/u/${post.uid}`)}>
-          <Avatar imageUrl={profilePicture} username={author} size={36} />
+          <Avatar imageUrl={profilePicture} username={author} size={36} theme={theme} />
           <View>
-            <Text style={[styles.handle, isDarkTheme && styles.textWhite]}>@{author}</Text>
-            <Text style={[styles.timestamp, isDarkTheme && styles.timestampWhite]}>
+            <Text style={[styles.handle, { color: theme.textColor }]}>@{author.toUpperCase()}</Text>
+            <Text style={[styles.timestamp, { color: theme.mutedTextColor }]}>
               {getTimeAgo(post.createdAt)}
-              {post.editedAt && " • edited"}
+              {post.editedAt && " // EDITED"}
             </Text>
           </View>
         </Pressable>
         <Pressable style={styles.menuBtn} onPress={openPostMenu}>
-          <Text style={[styles.menuIcon, isDarkTheme && styles.textWhite]}>⋯</Text>
+          <Text style={[styles.menuIcon, { color: theme.secondaryTextColor }]}>...</Text>
         </Pressable>
       </View>
 
-      <Pressable onPress={openComments}>
+      <Pressable
+        onPress={handleTap}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        style={styles.contentArea}
+      >
         {renderTextWithLinks(
           post.text,
-          [styles.postText, isDarkTheme && styles.textWhite],
-          [styles.linkText, isDarkTheme && styles.linkTextDark],
-          isDarkTheme
+          [styles.postText, { color: theme.textColor }],
+          [styles.linkText, { color: theme.primaryColor }],
+          true
         )}
+
+        {/* Heart overlay for double-tap */}
+        <HeartOverlay visible={showHeartOverlay} theme={theme} />
       </Pressable>
 
       {post.imageUrl && (
@@ -624,14 +780,15 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
             onRequestClose={() => setImageModalVisible(false)}
           >
             <Pressable style={styles.modalOverlay} onPress={() => setImageModalVisible(false)}>
+              <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
               <Image
                 source={{ uri: post.imageUrl }}
                 style={styles.fullscreenImage}
                 contentFit="contain"
                 cachePolicy="memory-disk"
               />
-              <Pressable style={styles.closeBtn} onPress={() => setImageModalVisible(false)}>
-                <Text style={styles.closeBtnText}>✕</Text>
+              <Pressable style={[styles.closeBtn, { backgroundColor: theme.surfaceColor }]} onPress={() => setImageModalVisible(false)}>
+                <Text style={[styles.closeBtnText, { color: theme.textColor }]}>x</Text>
               </Pressable>
             </Pressable>
           </Modal>
@@ -639,44 +796,73 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
       )}
 
       <View style={styles.actions}>
-        <Pressable style={styles.actionBtn} onPress={toggleLike}>
-          <Animated.View style={[styles.actionContent, { transform: [{ scale: likeScale }] }]}>
-            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark, liked && styles.actionIconLiked]}>
+        <Pressable style={styles.actionBtn} onPress={() => toggleLike(true)}>
+          <Animated.View style={[styles.actionContent, likeAnimatedStyle]}>
+            <Text
+              style={[
+                styles.actionIcon,
+                styles.likeIcon,
+                { color: liked ? "#ff3b30" : theme.secondaryTextColor },
+                liked && { textShadowColor: "#ff3b30", textShadowRadius: 8 }
+              ]}
+            >
               {liked ? "♥" : "♡"}
             </Text>
-            {likes > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark]}>{likes}</Text>}
+            {likes > 0 && (
+              <Text style={[styles.actionCount, { color: liked ? "#ff3b30" : theme.secondaryTextColor }]}>
+                {likes}
+              </Text>
+            )}
           </Animated.View>
         </Pressable>
 
         <Pressable style={styles.actionBtn} onPress={openComments}>
-          <Animated.View style={[styles.actionContent, { transform: [{ scale: commentScale }] }]}>
-            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark]}>💬</Text>
-            {comments > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark]}>{comments}</Text>}
+          <Animated.View style={[styles.actionContent, commentAnimatedStyle]}>
+            <Text style={[styles.actionIcon, { color: theme.secondaryTextColor }]}>◯</Text>
+            {comments > 0 && (
+              <Text style={[styles.actionCount, { color: theme.secondaryTextColor }]}>{comments}</Text>
+            )}
           </Animated.View>
         </Pressable>
 
         <Pressable style={styles.actionBtn} onPress={toggleRepost}>
-          <Animated.View style={[styles.actionContent, { transform: [{ scale: repostScale }] }]}>
-            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark, reposted && styles.actionIconReposted]}>
-              🔁
+          <Animated.View style={[styles.actionContent, repostAnimatedStyle]}>
+            <Text
+              style={[
+                styles.actionIcon,
+                { color: reposted ? theme.primaryColor : theme.secondaryTextColor },
+                reposted && { textShadowColor: theme.primaryColor, textShadowRadius: 8 }
+              ]}
+            >
+              {"↻"}
             </Text>
-            {reposts > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark, reposted && styles.actionCountReposted]}>{reposts}</Text>}
+            {reposts > 0 && (
+              <Text style={[styles.actionCount, { color: reposted ? theme.primaryColor : theme.secondaryTextColor }]}>
+                {reposts}
+              </Text>
+            )}
           </Animated.View>
         </Pressable>
 
         <Pressable style={styles.actionBtn} onPress={sharePost}>
-          <Animated.View style={[styles.actionContent, { transform: [{ scale: shareScale }] }]}>
-            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark]}>
-              📤
-            </Text>
-            {shares > 0 && <Text style={[styles.actionCount, isDarkTheme && styles.actionCountDark]}>{shares}</Text>}
+          <Animated.View style={[styles.actionContent, shareAnimatedStyle]}>
+            <Text style={[styles.actionIcon, { color: theme.secondaryTextColor }]}>↗</Text>
+            {shares > 0 && (
+              <Text style={[styles.actionCount, { color: theme.secondaryTextColor }]}>{shares}</Text>
+            )}
           </Animated.View>
         </Pressable>
 
         <Pressable style={styles.actionBtn} onPress={toggleBookmark}>
-          <Animated.View style={[styles.actionContent, { transform: [{ scale: bookmarkScale }] }]}>
-            <Text style={[styles.actionIcon, isDarkTheme && styles.actionIconDark, bookmarked && styles.actionIconBookmarked]}>
-              {bookmarked ? "🔖" : "📑"}
+          <Animated.View style={[styles.actionContent, bookmarkAnimatedStyle]}>
+            <Text
+              style={[
+                styles.actionIcon,
+                { color: bookmarked ? theme.primaryColor : theme.secondaryTextColor },
+                bookmarked && { textShadowColor: theme.primaryColor, textShadowRadius: 8 }
+              ]}
+            >
+              {bookmarked ? "★" : "☆"}
             </Text>
           </Animated.View>
         </Pressable>
@@ -684,146 +870,237 @@ const PostCardComponent = ({ post, username: providedUsername, onUsernameLoad, i
 
       <Modal visible={editModalVisible} animationType="slide" transparent={true}>
         <View style={styles.editModalOverlay}>
-          <View style={styles.editModal}>
+          <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={[styles.editModal, { backgroundColor: theme.surfaceColor }]}>
             <View style={styles.editModalHeader}>
-              <Text style={styles.editModalTitle}>Edit Post</Text>
+              <Text style={[styles.editModalTitle, { color: theme.textColor }]}>EDIT POST</Text>
               <Pressable onPress={() => setEditModalVisible(false)}>
-                <Text style={styles.editModalClose}>✕</Text>
+                <Text style={[styles.editModalClose, { color: theme.textColor }]}>x</Text>
               </Pressable>
             </View>
 
             <TextInput
-              style={styles.editInput}
+              style={[styles.editInput, {
+                backgroundColor: theme.backgroundColor,
+                color: theme.textColor,
+                borderColor: theme.borderColor
+              }]}
               placeholder="Post text..."
+              placeholderTextColor={theme.mutedTextColor}
               value={editText}
               onChangeText={setEditText}
               multiline
               autoFocus
             />
 
-            <Pressable style={styles.editSaveBtn} onPress={editPost}>
-              <Text style={styles.editSaveBtnText}>Save Changes</Text>
+            <Pressable
+              style={[styles.editSaveBtn, { backgroundColor: theme.primaryColor }]}
+              onPress={editPost}
+            >
+              <Text style={[styles.editSaveBtnText, { color: theme.backgroundColor }]}>SAVE</Text>
             </Pressable>
           </View>
         </View>
       </Modal>
-    </View>
+    </Animated.View>
   );
 };
 
 export const PostCard = React.memo(PostCardComponent);
 
 const styles = StyleSheet.create({
-  post: { borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 12, marginBottom: 10 },
-  repostIndicator: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 8 },
-  repostIcon: { fontSize: 14 },
-  repostText: { fontSize: 12, color: "#111", fontWeight: "800" },
-  repostTextDark: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+  post: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
   },
-  postHeader: { marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  userInfo: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
-  handle: { fontWeight: "900", color: "#111", fontSize: 14 },
-  timestamp: { fontSize: 12, color: "#111", marginTop: 2, fontWeight: "700" },
-  menuBtn: { padding: 4 },
-  menuIcon: { fontSize: 20, fontWeight: "900", color: "#111", lineHeight: 20 },
-  postText: { fontSize: 16, color: "#111", marginBottom: 8 },
-  linkText: {
-    color: "#fff",
-    fontWeight: "900",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+  repostIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
   },
-  linkTextDark: {
-    color: "#00e6ff",
-    fontWeight: "900",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
-  },
-  postImage: { width: "100%", height: 250, borderRadius: 8, marginTop: 8 },
-
-  // Dark theme text styles
-  textWhite: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
-  },
-  timestampWhite: {
-    color: "#fff",
+  repostIcon: {
+    fontSize: 14,
+    fontFamily: "SpaceMono",
     fontWeight: "700",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
   },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.95)",
+  repostText: {
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    letterSpacing: 1,
+  },
+  postHeader: {
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start"
+  },
+  userInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1
+  },
+  handle: {
+    fontFamily: "SpaceMono-Bold",
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
+  timestamp: {
+    fontSize: 11,
+    fontFamily: "SpaceMono",
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  menuBtn: {
+    padding: 4,
+    paddingHorizontal: 8,
+  },
+  menuIcon: {
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
+  contentArea: {
+    position: "relative",
+  },
+  postText: {
+    fontSize: 15,
+    fontFamily: "SpaceMono",
+    lineHeight: 22,
+    marginBottom: 8
+  },
+  linkText: {
+    fontFamily: "SpaceMono-Bold",
+  },
+  postImage: {
+    width: "100%",
+    height: 250,
+    borderRadius: 8,
+    marginTop: 12
+  },
+  heartOverlay: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    marginLeft: -40,
+    marginTop: -40,
+    width: 80,
+    height: 80,
     justifyContent: "center",
     alignItems: "center",
   },
-  fullscreenImage: { width: "100%", height: "100%" },
+  heartOverlayIcon: {
+    fontSize: 60,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  particleContainer: {
+    position: "absolute",
+    width: 80,
+    height: 80,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullscreenImage: {
+    width: "100%",
+    height: "100%"
+  },
   closeBtn: {
     position: "absolute",
     top: 50,
     right: 20,
-    backgroundColor: "#fff",
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
   },
-  closeBtnText: { fontSize: 20, fontWeight: "900", color: "#111" },
+  closeBtnText: {
+    fontSize: 20,
+    fontFamily: "SpaceMono-Bold",
+  },
 
-  actions: { marginTop: 12, flexDirection: "row", gap: 18, alignItems: "center" },
+  actions: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.1)",
+  },
   actionBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    minWidth: 50,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 44,
   },
   actionContent: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
   },
-  actionIcon: { fontSize: 26, color: "#111" },
-  actionIconDark: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+  actionIcon: {
+    fontSize: 18,
+    fontFamily: "SpaceMono-Bold",
   },
-  actionIconLiked: { color: "#ff0000" },
-  actionIconBookmarked: { color: "#ff9500" },
-  actionIconReposted: {
-    color: "#00d95f",
-    fontSize: 28,
+  likeIcon: {
+    width: 20,
+    textAlign: "center",
   },
-  actionCount: { fontSize: 16, fontWeight: "800", color: "#111" },
-  actionCountReposted: {
-    color: "#00d95f",
-    fontWeight: "900",
-  },
-  actionCountDark: {
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+  actionCount: {
+    fontSize: 13,
+    fontFamily: "SpaceMono",
   },
 
-  editModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  editModal: { backgroundColor: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 12 },
-  editModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  editModalTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
-  editModalClose: { fontSize: 24, fontWeight: "900", color: "#111" },
-  editInput: { minHeight: 100, borderWidth: 1, borderColor: "#111", borderRadius: 12, padding: 12, textAlignVertical: "top" },
-  editSaveBtn: { backgroundColor: "#111", padding: 14, borderRadius: 12, alignItems: "center" },
-  editSaveBtnText: { color: "#fff", fontWeight: "900" },
+  editModalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  editModal: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    gap: 16
+  },
+  editModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  editModalTitle: {
+    fontSize: 16,
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
+  editModalClose: {
+    fontSize: 24,
+    fontFamily: "SpaceMono-Bold",
+  },
+  editInput: {
+    minHeight: 100,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    fontFamily: "SpaceMono",
+    textAlignVertical: "top"
+  },
+  editSaveBtn: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center"
+  },
+  editSaveBtnText: {
+    fontFamily: "SpaceMono-Bold",
+    letterSpacing: 2,
+  },
 });
