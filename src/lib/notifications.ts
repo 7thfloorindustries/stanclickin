@@ -162,6 +162,66 @@ async function markEventsAsGrouped(
 }
 
 /**
+ * Send grouped update notification if multiple events detected
+ * This runs 2 seconds after the initial notification
+ */
+async function sendGroupedUpdateIfNeeded(
+  recipientUid: string,
+  type: NotificationType,
+  postId: string,
+  pushToken: string,
+  collapseId: string
+): Promise<void> {
+  try {
+    // Check for recent ungrouped events
+    const recentEvents = await getRecentSimilarEvents(recipientUid, type, postId);
+
+    if (recentEvents.length >= 2) {
+      // Found multiple events - send grouped update
+      const groupCount = recentEvents.length;
+      const groupedMessage = getGroupedNotificationMessage(type, groupCount);
+
+      console.log(`[Push] Sending grouped update: ${groupCount} ${type} notifications`);
+
+      // Send update notification with same collapseId (replaces previous)
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: pushToken,
+          sound: null, // Silent update - don't alert again
+          title: groupedMessage.title,
+          body: groupedMessage.body,
+          data: {
+            type,
+            postId,
+            grouped: true,
+            count: groupCount,
+          },
+          badge: 1,
+          priority: 'default',
+          channelId: 'default',
+          collapseId, // Same collapse ID - replaces previous notification
+        }),
+      });
+
+      // Mark events as grouped
+      const eventIds = recentEvents.filter((e: any) => e.id).map((e: any) => e.id);
+      if (eventIds.length > 0) {
+        await markEventsAsGrouped(recipientUid, eventIds);
+      }
+    }
+  } catch (error) {
+    console.error('[Push] Error sending grouped update:', error);
+    // Silent fail - update is optional
+  }
+}
+
+/**
  * Send push notification to device with retry and validation
  */
 async function sendPushNotification(
@@ -207,38 +267,14 @@ async function sendPushNotification(
       return;
     }
 
-    // Check for grouping opportunity
-    let message;
-    let shouldGroup = false;
-    let groupCount = 1;
+    // Build notification message (always individual for instant send)
+    const message = getNotificationMessage(type, fromUsername, previewText);
 
-    if (isGroupableType(type) && postId) {
-      // First, check if there are recent events (fast query)
-      const recentEvents = await getRecentSimilarEvents(recipientUid, type, postId);
-
-      if (recentEvents.length >= 1) {
-        // Found events to group with - include current event in count
-        groupCount = recentEvents.length + 1;
-        shouldGroup = true;
-
-        // Mark all previous events as grouped
-        const eventIds = recentEvents.filter((e: any) => e.id).map((e: any) => e.id);
-        if (eventIds.length > 0) {
-          await markEventsAsGrouped(recipientUid, eventIds);
-        }
-
-        console.log(`[Push] Grouping ${groupCount} ${type} notifications`);
-      }
-
-      // Track this event AFTER checking (so first notification has zero tracking overhead)
-      // Fire and forget - don't await to avoid blocking push
-      trackNotificationEvent(recipientUid, type, fromUid, fromUsername, postId);
-    }
-
-    // Build notification message (grouped or individual)
-    message = shouldGroup
-      ? getGroupedNotificationMessage(type, groupCount)
-      : getNotificationMessage(type, fromUsername, previewText);
+    // Generate collapse ID for groupable notifications
+    // Multiple notifications with same collapseId will replace each other
+    const collapseId = (isGroupableType(type) && postId)
+      ? `${postId}-${type}`
+      : undefined;
 
     // Send via Expo Push API with timeout
     const controller = new AbortController();
@@ -265,6 +301,7 @@ async function sendPushNotification(
         badge: 1,
         priority: 'high',
         channelId: 'default',
+        ...(collapseId && { collapseId }), // Add collapse ID for groupable notifications
       }),
       signal: controller.signal,
     });
@@ -292,6 +329,17 @@ async function sendPushNotification(
     }
 
     console.log('[Push] ✅ Notification sent successfully');
+
+    // AFTER sending, check for grouping opportunity (non-blocking)
+    if (isGroupableType(type) && postId && collapseId) {
+      // Track this event
+      trackNotificationEvent(recipientUid, type, fromUid, fromUsername, postId);
+
+      // Schedule a check for grouping after 2 seconds
+      setTimeout(() => {
+        sendGroupedUpdateIfNeeded(recipientUid, type, postId, pushToken, collapseId);
+      }, 2000);
+    }
 
   } catch (error: any) {
     console.error('[Push] ❌ Error sending notification:', error.message);
