@@ -579,6 +579,12 @@ export default function FlappyClickin() {
   useEffect(() => {
     const initIAP = async () => {
       try {
+        // Skip IAP in simulator/development - only works on real devices
+        if (!IAP.initConnection || !IAP.getProducts) {
+          console.log("IAP not available (simulator/dev mode)");
+          return;
+        }
+
         await IAP.initConnection();
         // @ts-ignore - react-native-iap types may be incorrect
         const products = await IAP.getProducts(PRODUCT_IDS);
@@ -590,7 +596,8 @@ export default function FlappyClickin() {
           Alert.alert("IAP Debug", `Found ${products.length} product(s):\n${products.map((p: any) => p.title).join(', ')}`);
         }
       } catch (error) {
-        Alert.alert("IAP Init Error", `${error}`);
+        // Silently fail in dev/simulator - IAP only works on real devices
+        console.log("IAP Init Error (expected in simulator):", error);
       }
     };
 
